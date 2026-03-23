@@ -56,20 +56,52 @@ def init_db():
 
 init_db()
 
-# ================= وظائف مساعدة للكشف عن الأرقام الوهمية =================
+# ================= وظائف مساعدة للكشف عن الأرقام الوهمية (محسنة) =================
 def is_virtual_number(phone):
-    """تحديد ما إذا كان الرقم وهمياً بناءً على البادئات المعروفة"""
+    """
+    تحديد ما إذا كان الرقم وهمياً.
+    الآن يعتبر الرقم حقيقياً إلا إذا بدأ ببادئات معروفة للأرقام المؤقتة.
+    """
+    # قائمة البادئات التي تستخدمها تطبيقات الأرقام المؤقتة والوهمية
     virtual_prefixes = [
-        '1', '+1', '44', '+44', '48', '+48', '371', '+371', '380', '+380',
-        '2', '+2', '3', '+3', '4', '+4', '5', '+5', '6', '+6', '7', '+7', '8', '+8', '9', '+9',
-        '0', '+0', '11', '22', '33', '44', '55', '66', '77', '88', '99',
-        '111', '222', '333', '444', '555', '666', '777', '888', '999'
+        '+1',      # الولايات المتحدة (كثير من الأرقام الافتراضية)
+        '+44',     # المملكة المتحدة
+        '+48',     # بولندا
+        '+371',    # لاتفيا
+        '+380',    # أوكرانيا
+        '+972',    # إسرائيل (أرقام مؤقتة)
+        '+61',     # أستراليا
+        '+81',     # اليابان
+        '+49',     # ألمانيا
+        '+33',     # فرنسا
+        '+34',     # إسبانيا
+        '+39',     # إيطاليا
+        '+31',     # هولندا
+        '+46',     # السويد
+        '+47',     # النرويج
+        '+45',     # الدنمارك
+        '+32',     # بلجيكا
+        '+41',     # سويسرا
+        '+353',    # أيرلندا
+        '+351',    # البرتغال
+        '+30',     # اليونان
+        '+90',     # تركيا
+        '+966',    # السعودية (أرقام مؤقتة في بعض التطبيقات)
+        '+971',    # الإمارات
+        '+20'      # مصر (ملاحظة: هناك أرقام مصرية حقيقية أيضاً، سنستثنيها)
     ]
+    # استثناء: الأرقام المصرية الحقيقية تبدأ بـ +20 أو 0
+    if phone.startswith('+20') or phone.startswith('0'):
+        return "لا ✅ (رقم حقيقي)"
+
+    # نزيل علامة + للمقارنة
     cleaned = phone.replace('+', '').replace(' ', '').replace('-', '')
     for prefix in virtual_prefixes:
         clean_prefix = prefix.replace('+', '')
         if cleaned.startswith(clean_prefix):
             return "نعم 🚨 (رقم وهمي/مؤقت)"
+
+    # أي رقم آخر (مثل +34 حقيقي ولكن ليس في القائمة) يعتبر حقيقياً
     return "لا ✅ (رقم حقيقي)"
 
 # ================= قالب صفحة التوثيق =================
@@ -229,18 +261,16 @@ def save_fingerprint():
     device_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, data['canvas_hash'] + data['screen'] + str(data['cores'])))
     now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # استخدام القفل وتكرار المحاولة في حالة القفل
+    # استخدام القفل وتكرار المحاولة
     max_retries = 5
     for attempt in range(max_retries):
         try:
             with get_db_connection() as conn:
                 c = conn.cursor()
-                # تحديث بيانات المستخدم
                 c.execute('''UPDATE users SET canvas_hash=?, screen=?, cores=?, browser=?, ip=?, isp=?, vpn=?, device_uuid=?, join_date=? 
                              WHERE user_id=?''',
                           (data['canvas_hash'], data['screen'], str(data['cores']), data['ua'][:100], user_ip, isp_name, vpn_status, device_uuid, now_time, user_id))
                 
-                # البحث عن تطابقات
                 c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status='rejected' ''', 
                           (device_uuid, data['canvas_hash'], user_id))
                 banned_match = c.fetchone()
@@ -252,26 +282,36 @@ def save_fingerprint():
                 c.execute('''SELECT phone, is_virtual_phone FROM users WHERE user_id=?''', (user_id,))
                 phone_data = c.fetchone()
                 conn.commit()
-                break  # نجحت العملية
+                break
         except sqlite3.OperationalError as e:
             if 'locked' in str(e) and attempt < max_retries - 1:
-                time.sleep(0.5 * (attempt + 1))  # تأخير متزايد
+                time.sleep(0.5 * (attempt + 1))
                 continue
             else:
                 logging.error(f"Database error after {attempt+1} attempts: {e}")
                 return jsonify({"error": "database busy, try again"}), 503
 
-    # بناء التقرير
     phone_num = phone_data['phone'] if phone_data else "غير مسجل"
     is_virtual = phone_data['is_virtual_phone'] if phone_data else "غير معروف"
 
+    # تحديد ما إذا كان المستخدم مشبوهاً
+    is_suspicious = False
     if banned_match:
         security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match['user_id']}, @{banned_match['username']})"
+        is_suspicious = True
     elif normal_match:
         security_note = f"\n⚠️ **اشتباه تكرار:** هذا الجهاز يخص عضو آخر (ID: {normal_match['user_id']}, @{normal_match['username']})"
+        is_suspicious = True
+    elif "وهمي" in is_virtual:
+        security_note = "\n⚠️ **رقم هاتف وهمي/مؤقت**"
+        is_suspicious = True
+    elif vpn_status == "نعم 🚨 (مشبوه)":
+        security_note = "\n⚠️ **استخدام VPN مشبوه**"
+        is_suspicious = True
     else:
         security_note = "\n✅ **الجهاز نظيف**"
 
+    # بناء التقرير (يُرسل للمشرفين في جميع الأحوال)
     report = f"""
 🚨 **تقرير الرادار الرقمي (سري جداً)** 🚨
 ━━━━━━━━━━━━━━━━━
@@ -281,7 +321,7 @@ def save_fingerprint():
 - **رقم وهمي؟:** `{is_virtual}`
 
 📱 **الهوية الصلبة (Hardware):**
-- **الرقم التسلسلي (UUID):** `{device_uuid}`
+- **البصمة الرقمية للجهاز (معرف فريد):** `{device_uuid}`
 - **بصمة الـ Canvas:** `{data['canvas_hash']}`
 - **الشاشة | المعالج:** `{data['screen']} | {data['cores']} Cores`
 - **البطارية لحظياً:** `{data.get('battery', 'N/A')}`
@@ -292,14 +332,33 @@ def save_fingerprint():
 - **استخدام VPN:** `{vpn_status}`
 {security_note}
 """
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
-               InlineKeyboardButton("❌ طرد", callback_data=f"reject_{user_id}"))
-    for admin in ADMINS:
-        try:
-            bot.send_message(admin, report, parse_mode="Markdown", reply_markup=markup)
-        except Exception as e:
-            logging.error(f"Failed to send to admin {admin}: {e}")
+    if is_suspicious:
+        # إرسال التقرير للمشرفين لاتخاذ القرار
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
+                   InlineKeyboardButton("❌ طرد", callback_data=f"reject_{user_id}"))
+        for admin in ADMINS:
+            try:
+                bot.send_message(admin, report, parse_mode="Markdown", reply_markup=markup)
+            except Exception as e:
+                logging.error(f"Failed to send to admin {admin}: {e}")
+    else:
+        # المستخدم نظيف: قبول تلقائي
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (user_id,))
+            conn.commit()
+        bot.send_message(user_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+        # إرسال القائمة الكاملة للمشرفين
+        for admin in ADMINS:
+            send_full_user_list(admin)
+        # إرسال نسخة من التقرير للمشرفين للإطلاع (بدون أزرار)
+        for admin in ADMINS:
+            try:
+                bot.send_message(admin, report + "\n✅ **تم القبول تلقائياً (جهاز نظيف)**", parse_mode="Markdown")
+            except Exception as e:
+                logging.error(f"Failed to send auto-accept report to admin {admin}: {e}")
+
     return jsonify({"status": "success"})
 
 # ================= مسار webhook =================
@@ -332,7 +391,6 @@ def send_full_user_list(admin_id):
         bot.send_message(admin_id, "📭 لا يوجد أي مستخدم مسجل حتى الآن.")
         return
 
-    # تقسيم القائمة إلى أجزاء
     msg = "📋 **قائمة المستخدمين المسجلين (كامل التفاصيل)**\n━━━━━━━━━━━━━━━━━\n"
     count = 0
     for user in users:
@@ -343,7 +401,7 @@ def send_full_user_list(admin_id):
         msg += f"📞 الهاتف: {user['phone']}\n"
         msg += f"🔍 وهمي؟: {user['is_virtual_phone']}\n"
         msg += f"🔐 الحالة: {user['status']}\n"
-        msg += f"🖥️ الجهاز (UUID): `{user['device_uuid']}`\n"
+        msg += f"🖥️ البصمة الرقمية للجهاز: `{user['device_uuid']}`\n"
         msg += f"🎨 بصمة Canvas: `{user['canvas_hash']}`\n"
         msg += f"📱 الشاشة: {user['screen']} | المعالج: {user['cores']} نواة\n"
         msg += f"🌍 IP: {user['ip']} | ISP: {user['isp']}\n"
