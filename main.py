@@ -11,7 +11,7 @@ import datetime
 # ================= الإعدادات الأساسية (التي يجب تعديلها) =================
 BOT_TOKEN = "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg"
 ADMINS = [18147516847, 1358013723]  # ضع الآي دي الخاص بك وبشركائك هنا
-DOMAIN = "bb-production-7996.up.railway.app # ضع رابط الاستضافة النهائي هنا
+DOMAIN = "bb-production-7996.up.railway.app" # ضع رابط الاستضافة النهائي هنا
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
