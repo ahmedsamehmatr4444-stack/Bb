@@ -9,6 +9,7 @@ import os
 import datetime
 
 # ================= الإعدادات الأساسية =================
+# تأكد إن التوكن والأدمن والدرومين صحيحة
 BOT_TOKEN = "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg"
 ADMINS = [18147516847, 1358013723] 
 DOMAIN = "https://bb-production-7996.up.railway.app" 
@@ -16,7 +17,7 @@ DOMAIN = "https://bb-production-7996.up.railway.app"
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# ================= 1. طبقة قاعدة البيانات الشاملة =================
+# ================= 1. طبقة قاعدة البيانات =================
 def init_db():
     conn = sqlite3.connect('union_radar.db', check_same_thread=False)
     c = conn.cursor()
@@ -30,7 +31,7 @@ def init_db():
 
 init_db()
 
-# ================= 2. طبقة الموقع السري وسحب البصمات (JS & HTML) =================
+# ================= 2. طبقة الـ HTML & CSS (بوابة التوثيق) =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -53,7 +54,7 @@ HTML_TEMPLATE = """
     
     <script>
         const tg = window.Telegram.WebApp;
-        tg.expand();
+        tg.expand(); // لفتح الصفحة بكامل الشاشة
 
         async function getDeepFingerprint() {
             let fp = {
@@ -80,7 +81,7 @@ HTML_TEMPLATE = """
                 document.getElementById("status").innerHTML = "✅ تم التوثيق بنجاح!";
                 document.getElementById("status").style.color = "#22c55e";
                 document.getElementById("sub-status").innerHTML = "يمكنك إغلاق هذه النافذة والعودة للبوت الآن.";
-                setTimeout(() => { tg.close(); }, 2000);
+                setTimeout(() => { tg.close(); }, 2000); // غلق الـ Web App تلقائياً
             });
         }
 
@@ -102,6 +103,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
+# ================= 3. مسارات Flask (السيرفر) =================
 @app.route('/verify/<int:user_id>')
 def verify_page(user_id):
     return render_template_string(HTML_TEMPLATE, user_id=user_id)
@@ -130,7 +132,7 @@ def save_fingerprint():
                  WHERE user_id=?''',
               (data['canvas_hash'], data['screen'], str(data['cores']), data['ua'][:100], user_ip, isp_name, vpn_status, device_uuid, now_time, user_id))
     
-    # فحص التطابق مع مطرودين أو مستخدمين سابقين
+    # فحص التطابق (الرادار)
     c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status='rejected' ''', 
               (device_uuid, data['canvas_hash'], user_id))
     banned_match = c.fetchone()
@@ -174,7 +176,7 @@ def save_fingerprint():
         except: pass
     return jsonify({"status": "success"})
 
-# ================= 3. أوامر البوت الأساسية =================
+# ================= 4. أوامر البوت =================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user = message.from_user
@@ -201,11 +203,11 @@ def handle_contact(message):
     conn.commit()
     conn.close()
     
-    # ميزة الـ Web App لفتح الصفحة داخل التليجرام
+    # هنا تم تفعيل الـ Web App ليفتح داخل التليجرام مباشرة
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=f"{DOMAIN}/verify/{user_id}")))
     
-    bot.send_message(user_id, "✅ تم تسجيل رقم الهاتف.\\n\\nالآن اضغط على الزر بالأسفل لتوثيق جهازك بالكامل داخل التطبيق:", reply_markup=markup)
+    bot.send_message(user_id, "✅ تم تسجيل رقم الهاتف.\\n\\nالآن اضغط على الزر بالأسفل لتوثيق جهازك بالكامل داخل التليجرام:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('accept_') or call.data.startswith('reject_'))
 def admin_decision(call):
@@ -222,8 +224,9 @@ def admin_decision(call):
     conn.close()
     bot.answer_callback_query(call.id, "تم تنفيذ القرار")
 
-# ================= 4. تشغيل السيرفر والبوت =================
+# ================= 5. التشغيل النهائي =================
 def run_flask():
+    # لازم نسحب البورت من البيئة عشان Railway يشتغل (خطأ 502)
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port)
 
