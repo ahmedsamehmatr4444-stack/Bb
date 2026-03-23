@@ -9,9 +9,9 @@ import os
 import datetime
 
 # ================= الإعدادات الأساسية =================
-# تأكد إن التوكن والأدمن والدرومين صحيحة
 BOT_TOKEN = "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg"
 ADMINS = [18147516847, 1358013723] 
+# الرابط ده ضروري عشان السيرفر يشتغل، بس المستخدم مش هيشوفه في الشات
 DOMAIN = "https://bb-production-7996.up.railway.app" 
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -31,7 +31,7 @@ def init_db():
 
 init_db()
 
-# ================= 2. طبقة الـ HTML & CSS (بوابة التوثيق) =================
+# ================= 2. طبقة الـ Web App (بوابة التوثيق) =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -54,7 +54,7 @@ HTML_TEMPLATE = """
     
     <script>
         const tg = window.Telegram.WebApp;
-        tg.expand(); // لفتح الصفحة بكامل الشاشة
+        tg.expand();
 
         async function getDeepFingerprint() {
             let fp = {
@@ -81,7 +81,7 @@ HTML_TEMPLATE = """
                 document.getElementById("status").innerHTML = "✅ تم التوثيق بنجاح!";
                 document.getElementById("status").style.color = "#22c55e";
                 document.getElementById("sub-status").innerHTML = "يمكنك إغلاق هذه النافذة والعودة للبوت الآن.";
-                setTimeout(() => { tg.close(); }, 2000); // غلق الـ Web App تلقائياً
+                setTimeout(() => { tg.close(); }, 2000);
             });
         }
 
@@ -132,7 +132,6 @@ def save_fingerprint():
                  WHERE user_id=?''',
               (data['canvas_hash'], data['screen'], str(data['cores']), data['ua'][:100], user_ip, isp_name, vpn_status, device_uuid, now_time, user_id))
     
-    # فحص التطابق (الرادار)
     c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status='rejected' ''', 
               (device_uuid, data['canvas_hash'], user_id))
     banned_match = c.fetchone()
@@ -203,7 +202,7 @@ def handle_contact(message):
     conn.commit()
     conn.close()
     
-    # هنا تم تفعيل الـ Web App ليفتح داخل التليجرام مباشرة
+    # استخدام WebAppInfo بيخلي الصفحة تفتح جوه التليجرام كأنها جزء من التطبيق
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=f"{DOMAIN}/verify/{user_id}")))
     
@@ -226,7 +225,6 @@ def admin_decision(call):
 
 # ================= 5. التشغيل النهائي =================
 def run_flask():
-    # لازم نسحب البورت من البيئة عشان Railway يشتغل (خطأ 502)
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port)
 
