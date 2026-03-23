@@ -6,7 +6,7 @@ import requests
 import uuid
 import os
 import datetime
-import threading  # ضفنا دي عشان نشغل البوت والموقع سوا
+import threading
 
 # ================= الإعدادات الأساسية =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg")
@@ -322,8 +322,11 @@ def run_bot():
     bot.infinity_polling(skip_pending=True)
 
 if __name__ == '__main__':
-    # تشغيل البوت في خيط (Thread) منفصل
-    threading.Thread(target=run_bot, daemon=True).start()
+    # تشغيل البوت في خيط منفصل لضمان عدم تعارض Flask مع Polling
+    t = threading.Thread(target=run_bot)
+    t.daemon = True
+    t.start()
     
-    # تشغيل Flask (الموقع) في الخيط الرئيسي
-    port = int(os.environ.
+    # تشغيل Flask على البورت المخصص من Railway
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
