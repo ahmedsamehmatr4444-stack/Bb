@@ -6,9 +6,10 @@ import requests
 import uuid
 import os
 import datetime
+import threading  # ضفنا دي عشان نشغل البوت والموقع سوا
 
 # ================= الإعدادات الأساسية =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAEKRxpwiWp_Ow2puiu_dPLqknJx1_Q2u9E")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg")
 ADMINS_STR = os.environ.get("ADMINS", "1358013723,8147516847")
 ADMINS = [int(x.strip()) for x in ADMINS_STR.split(",") if x.strip().isdigit()]
 DOMAIN = os.environ.get("DOMAIN", "https://bb-production-7996.up.railway.app")
@@ -283,7 +284,6 @@ def handle_contact(message):
     conn.commit()
     conn.close()
     
-    # إنشاء زر WebApp
     markup = InlineKeyboardMarkup()
     web_app_url = f"{DOMAIN}/verify/{user_id}"
     markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=web_app_url)))
@@ -315,22 +315,15 @@ def admin_decision(call):
     conn.close()
     bot.answer_callback_query(call.id, "تم تنفيذ القرار")
 
-# ================= إعداد webhook =================
-def set_webhook():
-    webhook_url = f"{DOMAIN}/webhook"
-    try:
-        bot.remove_webhook()
-        bot.set_webhook(url=webhook_url)
-        print(f"✅ Webhook set to {webhook_url}")
-    except Exception as e:
-        print(f"❌ Error setting webhook: {e}")
-
-# ================= نقطة الدخول =================
-if __name__ == '__main__':
-    # للتشغيل المحلي (polling)
-    print("Running locally with polling...")
+# ================= تشغيل البوت =================
+def run_bot():
     bot.remove_webhook()
+    print("Bot is polling...")
     bot.infinity_polling(skip_pending=True)
-else:
-    # عند التشغيل عبر gunicorn (على Railway)
-    set_webhook()
+
+if __name__ == '__main__':
+    # تشغيل البوت في خيط (Thread) منفصل
+    threading.Thread(target=run_bot, daemon=True).start()
+    
+    # تشغيل Flask (الموقع) في الخيط الرئيسي
+    port = int(os.environ.
