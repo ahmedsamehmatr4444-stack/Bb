@@ -8,7 +8,7 @@ import os
 import datetime
 
 # ================= الإعدادات الأساسية =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mf")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN is not set in environment variables")
 
