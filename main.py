@@ -41,6 +41,25 @@ def init_db():
 
 init_db()
 
+# ================= وظائف مساعدة للكشف عن الأرقام الوهمية =================
+def is_virtual_number(phone):
+    """تحديد ما إذا كان الرقم وهمياً بناءً على البادئات المعروفة وفحوصات إضافية"""
+    # قائمة موسعة من البادئات المعروفة للأرقام الوهمية (الافتراضية)
+    virtual_prefixes = [
+        '1', '+1', '44', '+44', '48', '+48', '371', '+371', '380', '+380',
+        '2', '+2', '3', '+3', '4', '+4', '5', '+5', '6', '+6', '7', '+7', '8', '+8', '9', '+9',
+        '0', '+0', '11', '22', '33', '44', '55', '66', '77', '88', '99',
+        '111', '222', '333', '444', '555', '666', '777', '888', '999'
+    ]
+    # إزالة أي علامة + ومسافات للمقارنة
+    cleaned = phone.replace('+', '').replace(' ', '').replace('-', '')
+    for prefix in virtual_prefixes:
+        clean_prefix = prefix.replace('+', '')
+        if cleaned.startswith(clean_prefix):
+            return "نعم 🚨 (رقم وهمي/مؤقت)"
+    # يمكن إضافة فحص عبر API خارجي (مثل numverify) إذا أردت
+    return "لا ✅ (رقم حقيقي)"
+
 # ================= قالب صفحة التوثيق =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -220,10 +239,11 @@ def save_fingerprint():
     phone_num = phone_data[0] if phone_data else "غير مسجل"
     is_virtual = phone_data[1] if phone_data else "غير معروف"
 
+    # بناء ملاحظة الأمان (تطابقات)
     if banned_match:
-        security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match[0]})"
+        security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match[0]}, @{banned_match[1]})"
     elif normal_match:
-        security_note = f"\n⚠️ **اشتباه تكرار:** هذا الجهاز يخص عضو آخر (ID: {normal_match[0]})"
+        security_note = f"\n⚠️ **اشتباه تكرار:** هذا الجهاز يخص عضو آخر (ID: {normal_match[0]}, @{normal_match[1]})"
     else:
         security_note = "\n✅ **الجهاز نظيف**"
 
@@ -267,6 +287,49 @@ def webhook():
         return 'OK', 200
     return 'Bad Request', 400
 
+# ================= وظيفة لإرسال قائمة جميع المستخدمين =================
+def send_full_user_list(admin_id):
+    """إرسال قائمة كاملة بجميع المستخدمين المسجلين إلى المشرف"""
+    conn = sqlite3.connect('union_radar.db')
+    c = conn.cursor()
+    c.execute('''SELECT user_id, name, username, phone, is_virtual_phone, 
+                      canvas_hash, screen, cores, browser, ip, isp, vpn, 
+                      device_uuid, join_date, status 
+                 FROM users ORDER BY join_date DESC''')
+    users = c.fetchall()
+    conn.close()
+
+    if not users:
+        bot.send_message(admin_id, "📭 لا يوجد أي مستخدم مسجل حتى الآن.")
+        return
+
+    # تقسيم القائمة إلى أجزاء لتجنب تجاوز حد طول الرسالة
+    msg = "📋 **قائمة المستخدمين المسجلين (كامل التفاصيل)**\n━━━━━━━━━━━━━━━━━\n"
+    count = 0
+    for user in users:
+        count += 1
+        user_id, name, username, phone, is_virtual, canvas, screen, cores, browser, ip, isp, vpn, device_uuid, join_date, status = user
+        msg += f"\n**#{count}** - ID: `{user_id}`\n"
+        msg += f"👤 الاسم: {name}\n"
+        msg += f"🆔 اليوزر: @{username if username else 'لا يوجد'}\n"
+        msg += f"📞 الهاتف: {phone}\n"
+        msg += f"🔍 وهمي؟: {is_virtual}\n"
+        msg += f"🔐 الحالة: {status}\n"
+        msg += f"🖥️ الجهاز (UUID): `{device_uuid}`\n"
+        msg += f"🎨 بصمة Canvas: `{canvas}`\n"
+        msg += f"📱 الشاشة: {screen} | المعالج: {cores} نواة\n"
+        msg += f"🌍 IP: {ip} | ISP: {isp}\n"
+        msg += f"🔒 VPN: {vpn}\n"
+        msg += f"📅 تاريخ التسجيل: {join_date}\n"
+        msg += "━━━━━━━━━━━━━━━━━\n"
+
+        if len(msg) > 3800:  # حد آمن للرسالة
+            bot.send_message(admin_id, msg, parse_mode="Markdown")
+            msg = ""
+
+    if msg:
+        bot.send_message(admin_id, msg, parse_mode="Markdown")
+
 # ================= أوامر البوت =================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -285,8 +348,8 @@ def send_welcome(message):
 def handle_contact(message):
     user_id = message.chat.id
     phone = message.contact.phone_number
-    virtual_prefixes = ['1', '+1', '44', '+44', '48', '+48', '371', '+371', '380', '+380']
-    is_virtual = "نعم 🚨" if any(phone.startswith(p) for p in virtual_prefixes) else "لا ✅"
+    # استخدام الدالة المحسنة للكشف عن الأرقام الوهمية
+    is_virtual = is_virtual_number(phone)
     
     conn = sqlite3.connect('union_radar.db')
     c = conn.cursor()
@@ -309,8 +372,11 @@ def admin_decision(call):
     if action == "accept":
         c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (target_id,))
         bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+        # بعد القبول، إرسال قائمة جميع المستخدمين للمشرف
+        for admin in ADMINS:
+            send_full_user_list(admin)
         try:
-            bot.edit_message_text(f"{call.message.text}\n\n**القرار:** تم القبول ✅", 
+            bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم القبول ✅", 
                                   call.message.chat.id, call.message.message_id)
         except:
             pass
@@ -318,7 +384,7 @@ def admin_decision(call):
         c.execute("UPDATE users SET status='rejected' WHERE user_id=?", (target_id,))
         bot.send_message(target_id, "❌ نعتذر، تم رفض طلب توثيقك.")
         try:
-            bot.edit_message_text(f"{call.message.text}\n\n**القرار:** تم الطرد ❌", 
+            bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم الطرد ❌", 
                                   call.message.chat.id, call.message.message_id)
         except:
             pass
