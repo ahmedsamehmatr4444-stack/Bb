@@ -8,7 +8,7 @@ import os
 import datetime
 
 # ================= الإعدادات الأساسية =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAEKRxpwiWp_Ow2puiu_dPLqknJx1_Q2u9E")
 ADMINS_STR = os.environ.get("ADMINS", "1358013723,8147516847")
 ADMINS = [int(x.strip()) for x in ADMINS_STR.split(",") if x.strip().isdigit()]
 DOMAIN = os.environ.get("DOMAIN", "https://bb-production-7996.up.railway.app")
