@@ -7,12 +7,21 @@ import uuid
 import os
 import datetime
 import threading
+import time
+import logging
 
-# ================= الإعدادات الأساسية =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAEKRxpwiWp_Ow2puiu_dPLqknJx1_Q2u9E")
-ADMINS_STR = os.environ.get("ADMINS", "1358013723,8147516847")
-ADMINS = [int(x.strip()) for x in ADMINS_STR.split(",") if x.strip().isdigit()]
-DOMAIN = os.environ.get("DOMAIN", "https://bb-production-7996.up.railway.app")
+# إعداد التسجيل
+logging.basicConfig(level=logging.INFO)
+
+# ================= الإعدادات الأساسية (مضمنة مباشرة) =================
+BOT_TOKEN = "8764397517:AAEKRxpwiWp_Ow2puiu_dPLqknJx1_Q2u9E"
+ADMINS = [1358013723, 8147516847]          # معرفات المشرفين
+DOMAIN = "https://bb-production-7996.up.railway.app"   # رابط التطبيق
+
+PORT = int(os.environ.get("PORT", 8080))
+
+logging.info(f"DOMAIN: {DOMAIN}")
+logging.info(f"PORT: {PORT}")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -28,10 +37,11 @@ def init_db():
                   join_date TEXT, status TEXT)''')
     conn.commit()
     conn.close()
+    logging.info("Database initialized")
 
 init_db()
 
-# ================= قالب صفحة التوثيق (مُحسن) =================
+# ================= قالب صفحة التوثيق =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -244,7 +254,7 @@ def save_fingerprint():
         try:
             bot.send_message(admin, report, parse_mode="Markdown", reply_markup=markup)
         except Exception as e:
-            print(f"Failed to send to admin {admin}: {e}")
+            logging.error(f"Failed to send to admin {admin}: {e}")
     return jsonify({"status": "success"})
 
 # ================= مسار webhook =================
@@ -284,6 +294,7 @@ def handle_contact(message):
     conn.commit()
     conn.close()
     
+    # إنشاء زر WebApp
     markup = InlineKeyboardMarkup()
     web_app_url = f"{DOMAIN}/verify/{user_id}"
     markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=web_app_url)))
@@ -315,18 +326,26 @@ def admin_decision(call):
     conn.close()
     bot.answer_callback_query(call.id, "تم تنفيذ القرار")
 
-# ================= تشغيل البوت =================
-def run_bot():
-    bot.remove_webhook()
-    print("Bot is polling...")
-    bot.infinity_polling(skip_pending=True)
+# ================= إعداد webhook (للإنتاج فقط) =================
+def setup_webhook():
+    time.sleep(3)  # انتظر قليلاً لضمان بدء الخادم
+    webhook_url = f"{DOMAIN}/webhook"
+    try:
+        bot.delete_webhook()
+        bot.set_webhook(url=webhook_url)
+        logging.info(f"✅ Webhook set to {webhook_url}")
+    except Exception as e:
+        logging.error(f"❌ Failed to set webhook: {e}")
 
-if __name__ == '__main__':
-    # تشغيل البوت في خيط منفصل لضمان عدم تعارض Flask مع Polling
-    t = threading.Thread(target=run_bot)
-    t.daemon = True
-    t.start()
-    
-    # تشغيل Flask على البورت المخصص من Railway
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+# ================= نقطة الدخول =================
+# نكتشف البيئة: إذا كان الرابط ليس القيمة الافتراضية أو وجدنا RAILWAY_PUBLIC_DOMAIN
+if DOMAIN != "https://your-app.up.railway.app" or os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+    logging.info("Production mode detected, starting webhook setup...")
+    threading.Thread(target=setup_webhook, daemon=True).start()
+else:
+    logging.info("Running locally with polling...")
+    try:
+        bot.delete_webhook()
+    except:
+        pass
+    bot.infinity_polling(skip_pending=True)
