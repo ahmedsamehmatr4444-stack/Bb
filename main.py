@@ -9,6 +9,7 @@ import datetime
 import threading
 import time
 import logging
+from contextlib import contextmanager
 
 # إعداد التسجيل
 logging.basicConfig(level=logging.INFO)
@@ -26,38 +27,49 @@ logging.info(f"PORT: {PORT}")
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# ================= قاعدة البيانات =================
+# ================= قفل قاعدة البيانات =================
+db_lock = threading.Lock()
+DB_PATH = 'union_radar.db'
+
+@contextmanager
+def get_db_connection():
+    """مدير سياق لفتح وإغلاق اتصال قاعدة البيانات مع قفل"""
+    with db_lock:
+        conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+
 def init_db():
-    conn = sqlite3.connect('union_radar.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (user_id INTEGER PRIMARY KEY, name TEXT, username TEXT, phone TEXT, 
-                  is_virtual_phone TEXT, canvas_hash TEXT, screen TEXT, cores TEXT, 
-                  browser TEXT, ip TEXT, isp TEXT, vpn TEXT, device_uuid TEXT, 
-                  join_date TEXT, status TEXT)''')
-    conn.commit()
-    conn.close()
+    """إنشاء الجداول إذا لم تكن موجودة"""
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                     (user_id INTEGER PRIMARY KEY, name TEXT, username TEXT, phone TEXT, 
+                      is_virtual_phone TEXT, canvas_hash TEXT, screen TEXT, cores TEXT, 
+                      browser TEXT, ip TEXT, isp TEXT, vpn TEXT, device_uuid TEXT, 
+                      join_date TEXT, status TEXT)''')
+        conn.commit()
     logging.info("Database initialized")
 
 init_db()
 
 # ================= وظائف مساعدة للكشف عن الأرقام الوهمية =================
 def is_virtual_number(phone):
-    """تحديد ما إذا كان الرقم وهمياً بناءً على البادئات المعروفة وفحوصات إضافية"""
-    # قائمة موسعة من البادئات المعروفة للأرقام الوهمية (الافتراضية)
+    """تحديد ما إذا كان الرقم وهمياً بناءً على البادئات المعروفة"""
     virtual_prefixes = [
         '1', '+1', '44', '+44', '48', '+48', '371', '+371', '380', '+380',
         '2', '+2', '3', '+3', '4', '+4', '5', '+5', '6', '+6', '7', '+7', '8', '+8', '9', '+9',
         '0', '+0', '11', '22', '33', '44', '55', '66', '77', '88', '99',
         '111', '222', '333', '444', '555', '666', '777', '888', '999'
     ]
-    # إزالة أي علامة + ومسافات للمقارنة
     cleaned = phone.replace('+', '').replace(' ', '').replace('-', '')
     for prefix in virtual_prefixes:
         clean_prefix = prefix.replace('+', '')
         if cleaned.startswith(clean_prefix):
             return "نعم 🚨 (رقم وهمي/مؤقت)"
-    # يمكن إضافة فحص عبر API خارجي (مثل numverify) إذا أردت
     return "لا ✅ (رقم حقيقي)"
 
 # ================= قالب صفحة التوثيق =================
@@ -217,33 +229,46 @@ def save_fingerprint():
     device_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, data['canvas_hash'] + data['screen'] + str(data['cores'])))
     now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    conn = sqlite3.connect('union_radar.db')
-    c = conn.cursor()
-    c.execute('''UPDATE users SET canvas_hash=?, screen=?, cores=?, browser=?, ip=?, isp=?, vpn=?, device_uuid=?, join_date=? 
-                 WHERE user_id=?''',
-              (data['canvas_hash'], data['screen'], str(data['cores']), data['ua'][:100], user_ip, isp_name, vpn_status, device_uuid, now_time, user_id))
-    
-    c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status='rejected' ''', 
-              (device_uuid, data['canvas_hash'], user_id))
-    banned_match = c.fetchone()
-    
-    c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status!='rejected' ''', 
-              (device_uuid, data['canvas_hash'], user_id))
-    normal_match = c.fetchone()
-    
-    c.execute('''SELECT phone, is_virtual_phone FROM users WHERE user_id=?''', (user_id,))
-    phone_data = c.fetchone()
-    conn.commit()
-    conn.close()
+    # استخدام القفل وتكرار المحاولة في حالة القفل
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            with get_db_connection() as conn:
+                c = conn.cursor()
+                # تحديث بيانات المستخدم
+                c.execute('''UPDATE users SET canvas_hash=?, screen=?, cores=?, browser=?, ip=?, isp=?, vpn=?, device_uuid=?, join_date=? 
+                             WHERE user_id=?''',
+                          (data['canvas_hash'], data['screen'], str(data['cores']), data['ua'][:100], user_ip, isp_name, vpn_status, device_uuid, now_time, user_id))
+                
+                # البحث عن تطابقات
+                c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status='rejected' ''', 
+                          (device_uuid, data['canvas_hash'], user_id))
+                banned_match = c.fetchone()
+                
+                c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status!='rejected' ''', 
+                          (device_uuid, data['canvas_hash'], user_id))
+                normal_match = c.fetchone()
+                
+                c.execute('''SELECT phone, is_virtual_phone FROM users WHERE user_id=?''', (user_id,))
+                phone_data = c.fetchone()
+                conn.commit()
+                break  # نجحت العملية
+        except sqlite3.OperationalError as e:
+            if 'locked' in str(e) and attempt < max_retries - 1:
+                time.sleep(0.5 * (attempt + 1))  # تأخير متزايد
+                continue
+            else:
+                logging.error(f"Database error after {attempt+1} attempts: {e}")
+                return jsonify({"error": "database busy, try again"}), 503
 
-    phone_num = phone_data[0] if phone_data else "غير مسجل"
-    is_virtual = phone_data[1] if phone_data else "غير معروف"
+    # بناء التقرير
+    phone_num = phone_data['phone'] if phone_data else "غير مسجل"
+    is_virtual = phone_data['is_virtual_phone'] if phone_data else "غير معروف"
 
-    # بناء ملاحظة الأمان (تطابقات)
     if banned_match:
-        security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match[0]}, @{banned_match[1]})"
+        security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match['user_id']}, @{banned_match['username']})"
     elif normal_match:
-        security_note = f"\n⚠️ **اشتباه تكرار:** هذا الجهاز يخص عضو آخر (ID: {normal_match[0]}, @{normal_match[1]})"
+        security_note = f"\n⚠️ **اشتباه تكرار:** هذا الجهاز يخص عضو آخر (ID: {normal_match['user_id']}, @{normal_match['username']})"
     else:
         security_note = "\n✅ **الجهاز نظيف**"
 
@@ -290,40 +315,43 @@ def webhook():
 # ================= وظيفة لإرسال قائمة جميع المستخدمين =================
 def send_full_user_list(admin_id):
     """إرسال قائمة كاملة بجميع المستخدمين المسجلين إلى المشرف"""
-    conn = sqlite3.connect('union_radar.db')
-    c = conn.cursor()
-    c.execute('''SELECT user_id, name, username, phone, is_virtual_phone, 
-                      canvas_hash, screen, cores, browser, ip, isp, vpn, 
-                      device_uuid, join_date, status 
-                 FROM users ORDER BY join_date DESC''')
-    users = c.fetchall()
-    conn.close()
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute('''SELECT user_id, name, username, phone, is_virtual_phone, 
+                              canvas_hash, screen, cores, browser, ip, isp, vpn, 
+                              device_uuid, join_date, status 
+                         FROM users ORDER BY join_date DESC''')
+            users = c.fetchall()
+    except Exception as e:
+        logging.error(f"Error fetching users: {e}")
+        bot.send_message(admin_id, "❌ حدث خطأ أثناء جلب قائمة المستخدمين.")
+        return
 
     if not users:
         bot.send_message(admin_id, "📭 لا يوجد أي مستخدم مسجل حتى الآن.")
         return
 
-    # تقسيم القائمة إلى أجزاء لتجنب تجاوز حد طول الرسالة
+    # تقسيم القائمة إلى أجزاء
     msg = "📋 **قائمة المستخدمين المسجلين (كامل التفاصيل)**\n━━━━━━━━━━━━━━━━━\n"
     count = 0
     for user in users:
         count += 1
-        user_id, name, username, phone, is_virtual, canvas, screen, cores, browser, ip, isp, vpn, device_uuid, join_date, status = user
-        msg += f"\n**#{count}** - ID: `{user_id}`\n"
-        msg += f"👤 الاسم: {name}\n"
-        msg += f"🆔 اليوزر: @{username if username else 'لا يوجد'}\n"
-        msg += f"📞 الهاتف: {phone}\n"
-        msg += f"🔍 وهمي؟: {is_virtual}\n"
-        msg += f"🔐 الحالة: {status}\n"
-        msg += f"🖥️ الجهاز (UUID): `{device_uuid}`\n"
-        msg += f"🎨 بصمة Canvas: `{canvas}`\n"
-        msg += f"📱 الشاشة: {screen} | المعالج: {cores} نواة\n"
-        msg += f"🌍 IP: {ip} | ISP: {isp}\n"
-        msg += f"🔒 VPN: {vpn}\n"
-        msg += f"📅 تاريخ التسجيل: {join_date}\n"
+        msg += f"\n**#{count}** - ID: `{user['user_id']}`\n"
+        msg += f"👤 الاسم: {user['name']}\n"
+        msg += f"🆔 اليوزر: @{user['username'] if user['username'] else 'لا يوجد'}\n"
+        msg += f"📞 الهاتف: {user['phone']}\n"
+        msg += f"🔍 وهمي؟: {user['is_virtual_phone']}\n"
+        msg += f"🔐 الحالة: {user['status']}\n"
+        msg += f"🖥️ الجهاز (UUID): `{user['device_uuid']}`\n"
+        msg += f"🎨 بصمة Canvas: `{user['canvas_hash']}`\n"
+        msg += f"📱 الشاشة: {user['screen']} | المعالج: {user['cores']} نواة\n"
+        msg += f"🌍 IP: {user['ip']} | ISP: {user['isp']}\n"
+        msg += f"🔒 VPN: {user['vpn']}\n"
+        msg += f"📅 تاريخ التسجيل: {user['join_date']}\n"
         msg += "━━━━━━━━━━━━━━━━━\n"
 
-        if len(msg) > 3800:  # حد آمن للرسالة
+        if len(msg) > 3800:
             bot.send_message(admin_id, msg, parse_mode="Markdown")
             msg = ""
 
@@ -334,12 +362,17 @@ def send_full_user_list(admin_id):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user = message.from_user
-    conn = sqlite3.connect('union_radar.db')
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id, name, username, status) VALUES (?, ?, ?, 'pending')", 
-              (user.id, user.first_name, user.username))
-    conn.commit()
-    conn.close()
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("INSERT OR IGNORE INTO users (user_id, name, username, status) VALUES (?, ?, ?, 'pending')", 
+                      (user.id, user.first_name, user.username))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Error in start: {e}")
+        bot.reply_to(message, "حدث خطأ في النظام، حاول مرة أخرى لاحقاً.")
+        return
+
     markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add(KeyboardButton("📱 مشاركة جهة الاتصال (ضروري)", request_contact=True))
     bot.reply_to(message, "أهلاً بك في نظام حماية الاتحاد العربي.\nللبدء، يرجى مشاركة جهة الاتصال الخاصة بك:", reply_markup=markup)
@@ -348,16 +381,18 @@ def send_welcome(message):
 def handle_contact(message):
     user_id = message.chat.id
     phone = message.contact.phone_number
-    # استخدام الدالة المحسنة للكشف عن الأرقام الوهمية
     is_virtual = is_virtual_number(phone)
     
-    conn = sqlite3.connect('union_radar.db')
-    c = conn.cursor()
-    c.execute("UPDATE users SET phone=?, is_virtual_phone=? WHERE user_id=?", (phone, is_virtual, user_id))
-    conn.commit()
-    conn.close()
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("UPDATE users SET phone=?, is_virtual_phone=? WHERE user_id=?", (phone, is_virtual, user_id))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Error in contact: {e}")
+        bot.send_message(user_id, "حدث خطأ في حفظ الرقم، حاول مرة أخرى.")
+        return
     
-    # إنشاء زر WebApp
     markup = InlineKeyboardMarkup()
     web_app_url = f"{DOMAIN}/verify/{user_id}"
     markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=web_app_url)))
@@ -367,34 +402,39 @@ def handle_contact(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith('accept_') or call.data.startswith('reject_'))
 def admin_decision(call):
     action, target_id = call.data.split('_')
-    conn = sqlite3.connect('union_radar.db')
-    c = conn.cursor()
-    if action == "accept":
-        c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (target_id,))
-        bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
-        # بعد القبول، إرسال قائمة جميع المستخدمين للمشرف
-        for admin in ADMINS:
-            send_full_user_list(admin)
-        try:
-            bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم القبول ✅", 
-                                  call.message.chat.id, call.message.message_id)
-        except:
-            pass
-    else:
-        c.execute("UPDATE users SET status='rejected' WHERE user_id=?", (target_id,))
-        bot.send_message(target_id, "❌ نعتذر، تم رفض طلب توثيقك.")
-        try:
-            bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم الطرد ❌", 
-                                  call.message.chat.id, call.message.message_id)
-        except:
-            pass
-    conn.commit()
-    conn.close()
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            if action == "accept":
+                c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (target_id,))
+                conn.commit()
+                bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+                for admin in ADMINS:
+                    send_full_user_list(admin)
+                try:
+                    bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم القبول ✅", 
+                                          call.message.chat.id, call.message.message_id)
+                except:
+                    pass
+            else:
+                c.execute("UPDATE users SET status='rejected' WHERE user_id=?", (target_id,))
+                conn.commit()
+                bot.send_message(target_id, "❌ نعتذر، تم رفض طلب توثيقك.")
+                try:
+                    bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم الطرد ❌", 
+                                          call.message.chat.id, call.message.message_id)
+                except:
+                    pass
+    except Exception as e:
+        logging.error(f"Error in decision: {e}")
+        bot.answer_callback_query(call.id, "حدث خطأ أثناء تنفيذ القرار.")
+        return
+
     bot.answer_callback_query(call.id, "تم تنفيذ القرار")
 
 # ================= إعداد webhook (للإنتاج فقط) =================
 def setup_webhook():
-    time.sleep(3)  # انتظر قليلاً لضمان بدء الخادم
+    time.sleep(3)
     webhook_url = f"{DOMAIN}/webhook"
     try:
         bot.delete_webhook()
@@ -404,7 +444,6 @@ def setup_webhook():
         logging.error(f"❌ Failed to set webhook: {e}")
 
 # ================= نقطة الدخول =================
-# نكتشف البيئة: إذا كان الرابط ليس القيمة الافتراضية أو وجدنا RAILWAY_PUBLIC_DOMAIN
 if DOMAIN != "https://your-app.up.railway.app" or os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
     logging.info("Production mode detected, starting webhook setup...")
     threading.Thread(target=setup_webhook, daemon=True).start()
