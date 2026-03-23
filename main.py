@@ -8,10 +8,18 @@ import os
 import datetime
 
 # ================= الإعدادات الأساسية =================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg")
-ADMINS = [int(x) for x in os.environ.get("ADMINS", "18147516847,1358013723").split(",") if x.strip().isdigit()]
-DOMAIN = os.environ.get("DOMAIN", "https://bb-production-7996.up.railway.app")
-USE_WEBHOOK = os.environ.get("USE_WEBHOOK", "true").lower() == "true"  # استخدم webhook في الإنتاج
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN is not set in environment variables")
+
+ADMINS = []
+admins_str = os.environ.get("ADMINS", "")
+if admins_str:
+    ADMINS = [int(x.strip()) for x in admins_str.split(",") if x.strip().isdigit()]
+
+DOMAIN = os.environ.get("DOMAIN")
+if not DOMAIN:
+    raise ValueError("DOMAIN is not set. Example: https://your-app.up.railway.app")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
@@ -30,7 +38,7 @@ def init_db():
 
 init_db()
 
-# ================= 2. قالب صفحة الويب =================
+# ================= 2. قالب صفحة الويب (كما هو) =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -243,25 +251,69 @@ def webhook():
         return 'OK', 200
     return 'Bad Request', 400
 
-# ================= 5. إعداد webhook عند بدء التشغيل =================
+# ================= 5. أوامر البوت =================
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    user = message.from_user
+    conn = sqlite3.connect('union_radar.db')
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO users (user_id, name, username, status) VALUES (?, ?, ?, 'pending')", 
+              (user.id, user.first_name, user.username))
+    conn.commit()
+    conn.close()
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.add(KeyboardButton("📱 مشاركة جهة الاتصال (ضروري)", request_contact=True))
+    bot.reply_to(message, "أهلاً بك في نظام حماية الاتحاد العربي.\nللبدء، يرجى مشاركة جهة الاتصال الخاصة بك:", reply_markup=markup)
+
+@bot.message_handler(content_types=['contact'])
+def handle_contact(message):
+    user_id = message.chat.id
+    phone = message.contact.phone_number
+    virtual_prefixes = ['1', '44', '48']
+    is_virtual = "نعم 🚨" if any(phone.startswith(p) for p in virtual_prefixes) else "لا ✅"
+    
+    conn = sqlite3.connect('union_radar.db')
+    c = conn.cursor()
+    c.execute("UPDATE users SET phone=?, is_virtual_phone=? WHERE user_id=?", (phone, is_virtual, user_id))
+    conn.commit()
+    conn.close()
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=f"{DOMAIN}/verify/{user_id}")))
+    
+    bot.send_message(user_id, "✅ تم تسجيل رقم الهاتف.\n\nالآن اضغط على الزر بالأسفل لتوثيق جهازك بالكامل داخل التليجرام:", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('accept_') or call.data.startswith('reject_'))
+def admin_decision(call):
+    action, target_id = call.data.split('_')
+    conn = sqlite3.connect('union_radar.db')
+    c = conn.cursor()
+    if action == "accept":
+        c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (target_id,))
+        bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+    else:
+        c.execute("UPDATE users SET status='rejected' WHERE user_id=?", (target_id,))
+        bot.send_message(target_id, "❌ نعتذر، تم رفض طلب توثيقك.")
+    conn.commit()
+    conn.close()
+    bot.answer_callback_query(call.id, "تم تنفيذ القرار")
+
+# ================= 6. إعداد webhook عند بدء التشغيل =================
 def set_webhook():
-    if USE_WEBHOOK:
-        webhook_url = f"{DOMAIN}/webhook"
+    webhook_url = f"{DOMAIN}/webhook"
+    try:
         bot.remove_webhook()
         bot.set_webhook(url=webhook_url)
-        print(f"Webhook set to {webhook_url}")
-    else:
-        # عند التشغيل المحلي باستخدام polling
-        bot.remove_webhook()
-        threading.Thread(target=bot.infinity_polling, kwargs={'skip_pending': True}, daemon=True).start()
-        print("Polling started (local mode)")
+        print(f"✅ Webhook set to {webhook_url}")
+    except Exception as e:
+        print(f"❌ Error setting webhook: {e}")
 
-# ================= 6. تشغيل التطبيق =================
+# ================= 7. تشغيل التطبيق =================
 if __name__ == '__main__':
-    # للتشغيل المحلي (python app.py)
-    port = int(os.environ.get('PORT', 5000))
-    set_webhook()  # ستبدأ polling إذا كان USE_WEBHOOK=False
-    app.run(host='0.0.0.0', port=port)
+    # عند التشغيل محلياً (اختياري) - نستخدم polling
+    print("Running locally with polling...")
+    bot.remove_webhook()
+    bot.infinity_polling(skip_pending=True)
 else:
-    # عند التشغيل عبر gunicorn، نضبط webhook قبل بدء السيرفر
+    # عند التشغيل عبر gunicorn، نضبط webhook أولاً ثم نبدأ Flask
     set_webhook()
