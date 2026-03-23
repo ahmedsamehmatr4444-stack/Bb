@@ -56,15 +56,10 @@ init_db()
 
 # ================= وظائف متقدمة =================
 def parse_user_agent(ua):
-    """استخراج نظام التشغيل واسم الجهاز من User-Agent"""
     ua_lower = ua.lower()
     if 'android' in ua_lower:
         os_type = "🤖 Android"
-        patterns = [
-            r';\s([^;]+?)\s?(?:Build/|\))',
-            r'Android\s[\d\.]+;\s([^;]+);',
-            r'Android\s[\d\.]+;\s([^;]+)'
-        ]
+        patterns = [r';\s([^;]+?)\s?(?:Build/|\))', r'Android\s[\d\.]+;\s([^;]+);', r'Android\s[\d\.]+;\s([^;]+)']
         device = "جهاز Android"
         for pattern in patterns:
             match = re.search(pattern, ua)
@@ -97,11 +92,9 @@ def parse_user_agent(ua):
     return f"{os_type} | {device}"
 
 def get_location_and_isp(ip):
-    """جلب الموقع الجغرافي ومزود الخدمة باستخدام عدة APIs"""
     location = "غير معروف"
     isp = "غير معروف"
     vpn = False
-    # محاولة 1: ip-api.com
     try:
         r = requests.get(f"http://ip-api.com/json/{ip}?fields=status,country,city,regionName,lat,lon,isp,proxy", timeout=5)
         data = r.json()
@@ -112,7 +105,6 @@ def get_location_and_isp(ip):
             return location, isp, vpn
     except:
         pass
-    # محاولة 2: ipapi.co
     try:
         r = requests.get(f"https://ipapi.co/{ip}/json/", timeout=5)
         data = r.json()
@@ -123,7 +115,6 @@ def get_location_and_isp(ip):
             return location, isp, vpn
     except:
         pass
-    # محاولة 3: ipinfo.io
     try:
         r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=5)
         data = r.json()
@@ -140,7 +131,6 @@ def get_location_and_isp(ip):
     return location, isp, vpn
 
 def is_virtual_number(phone):
-    """تحديد ما إذا كان الرقم وهمياً"""
     if phone.startswith('+20') or phone.startswith('0'):
         return "لا ✅ (رقم حقيقي)"
     virtual_prefixes = ['+1','+44','+48','+371','+380','+972','+61','+81','+49','+33','+34','+39','+31','+46','+47','+45','+32','+41','+353','+351','+30','+90','+966','+971']
@@ -315,6 +305,7 @@ def save_fingerprint():
     user_name = user_data['name']
     user_username = user_data['username'] if user_data['username'] else "لا يوجد"
 
+    # تحديد الشبهة
     is_suspicious = False
     if banned_match:
         security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match['user_id']}, @{banned_match['username']})"
@@ -384,16 +375,24 @@ def save_fingerprint():
             c = conn.cursor()
             c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (user_id,))
             conn.commit()
-        # إرسال معلومات المستخدم الجديد للمشرفين
+
+        # إرسال معلومات المستخدم الجديد للمشرفين (تقرير مفصل)
         for admin in ADMINS:
             try:
                 bot.send_message(admin, f"✅ **تم قبول مستخدم جديد تلقائياً:**\n{report}", parse_mode="Markdown")
-            except:
-                pass
+            except Exception as e:
+                logging.error(f"Failed to send new user info to admin {admin}: {e}")
+
         # إرسال القائمة الكاملة للمشرفين
         for admin in ADMINS:
             send_full_user_list(admin)
-        bot.send_message(user_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+
+        # إرسال رسالة للمستخدم
+        try:
+            bot.send_message(user_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+            bot.send_message(user_id, f"📋 **معلومات حسابك المسجلة:**\n{report}", parse_mode="Markdown")
+        except Exception as e:
+            logging.error(f"Failed to send confirmation to user {user_id}: {e}")
 
     return jsonify({"status": "success"})
 
@@ -409,7 +408,7 @@ def webhook():
 
 # ================= وظيفة إرسال القائمة الكاملة =================
 def send_full_user_list(admin_id):
-    """إرسال قائمة كاملة بجميع المستخدمين المسجلين (القايمة)"""
+    """إرسال قائمة كاملة بجميع المستخدمين المقبولين"""
     try:
         with get_db_connection() as conn:
             c = conn.cursor()
@@ -454,21 +453,31 @@ def send_full_user_list(admin_id):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute("SELECT status FROM users WHERE user_id=?", (user_id,))
-        row = c.fetchone()
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT status FROM users WHERE user_id=?", (user_id,))
+            row = c.fetchone()
+    except Exception as e:
+        logging.error(f"Error in start: {e}")
+        bot.reply_to(message, "حدث خطأ في النظام، حاول مرة أخرى لاحقاً.")
+        return
+
     if row:
         if row['status'] == 'rejected':
             bot.reply_to(message, "❌ **لقد تم طردك من الاتحاد ولا يمكنك التسجيل مرة أخرى.**", parse_mode="Markdown")
             return
         elif row['status'] == 'accepted':
-            bot.reply_to(message, "✅ **أنت مسجل بالفعل في الاتحاد العربي.**\nيمكنك استخدام البوت للتواصل مع الإدارة.", parse_mode="Markdown")
+            # إرسال رسالة للمستخدم المسجل مع معلومات بسيطة
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("📋 عرض معلوماتي", callback_data=f"show_my_info_{user_id}"))
+            markup.add(InlineKeyboardButton("📞 تواصل مع الإدارة", url="https://t.me/YourSupportChannel"))
+            bot.reply_to(message, "✅ **أنت مسجل بالفعل في الاتحاد العربي.**\nيمكنك استخدام الأزرار أدناه لعرض معلوماتك أو التواصل مع الإدارة.", 
+                         parse_mode="Markdown", reply_markup=markup)
             return
-        else:
-            # pending – يمكنه متابعة التسجيل
-            pass
+        # pending: يتابع التسجيل
     else:
+        # مستخدم جديد
         with get_db_connection() as conn:
             c = conn.cursor()
             c.execute("INSERT INTO users (user_id, name, username, status) VALUES (?, ?, ?, 'pending')",
@@ -482,10 +491,16 @@ def send_welcome(message):
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     user_id = message.chat.id
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        c.execute("SELECT status FROM users WHERE user_id=?", (user_id,))
-        row = c.fetchone()
+    try:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT status FROM users WHERE user_id=?", (user_id,))
+            row = c.fetchone()
+    except Exception as e:
+        logging.error(f"Error in contact: {e}")
+        bot.send_message(user_id, "حدث خطأ في النظام، حاول مرة أخرى.")
+        return
+
     if not row:
         bot.send_message(user_id, "حدث خطأ، يرجى استخدام /start من جديد.")
         return
@@ -493,7 +508,7 @@ def handle_contact(message):
         bot.send_message(user_id, "❌ لقد تم طردك من الاتحاد ولا يمكنك إكمال التسجيل.")
         return
     if row['status'] == 'accepted':
-        bot.send_message(user_id, "✅ أنت مسجل بالفعل.")
+        bot.send_message(user_id, "✅ أنت مسجل بالفعل. يمكنك استخدام /start لعرض معلوماتك.")
         return
 
     phone = message.contact.phone_number
@@ -509,8 +524,41 @@ def handle_contact(message):
     markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=web_app_url)))
     bot.send_message(user_id, "✅ تم تسجيل رقم الهاتف.\n\nالآن اضغط على الزر بالأسفل لتوثيق جهازك بالكامل داخل التليجرام:", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('accept_') or call.data.startswith('reject_'))
-def admin_decision(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith('accept_') or call.data.startswith('reject_') or call.data.startswith('show_my_info_'))
+def handle_callback(call):
+    if call.data.startswith('show_my_info_'):
+        user_id = int(call.data.split('_')[3])
+        # جلب معلومات المستخدم
+        try:
+            with get_db_connection() as conn:
+                c = conn.cursor()
+                c.execute('''SELECT name, username, phone, is_virtual_phone, canvas_hash, screen, cores, ip, isp, vpn, device_uuid, join_date 
+                             FROM users WHERE user_id=?''', (user_id,))
+                user = c.fetchone()
+            if user:
+                info = f"""
+📋 **معلومات حسابك:**
+━━━━━━━━━━━━━━━━━
+👤 **الاسم:** {user['name']}
+🆔 **اليوزر:** @{user['username'] if user['username'] else 'لا يوجد'}
+📞 **الهاتف:** {user['phone']}
+🔍 **وهمي؟:** {user['is_virtual_phone']}
+🖥️ **البصمة الرقمية:** `{user['device_uuid']}`
+🎨 **بصمة Canvas:** `{user['canvas_hash']}`
+📱 **الشاشة:** {user['screen']} | **المعالج:** {user['cores']} نواة
+🌍 **IP:** {user['ip']} | **ISP:** {user['isp']}
+🔒 **VPN:** {user['vpn']}
+📅 **تاريخ التسجيل:** {user['join_date']}
+"""
+                bot.edit_message_text(info, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+            else:
+                bot.answer_callback_query(call.id, "لم يتم العثور على معلومات.")
+        except Exception as e:
+            logging.error(f"Error showing user info: {e}")
+            bot.answer_callback_query(call.id, "حدث خطأ.")
+        return
+
+    # معالجة القبول/الرفض
     action, target_id = call.data.split('_')
     try:
         with get_db_connection() as conn:
@@ -519,7 +567,8 @@ def admin_decision(call):
                 c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (target_id,))
                 conn.commit()
                 # جلب معلومات المستخدم المقبول
-                c.execute("SELECT name, username, phone, is_virtual_phone, canvas_hash, screen, cores, ip, isp, vpn, device_uuid, join_date FROM users WHERE user_id=?", (target_id,))
+                c.execute('''SELECT name, username, phone, is_virtual_phone, canvas_hash, screen, cores, ip, isp, vpn, device_uuid, join_date 
+                             FROM users WHERE user_id=?''', (target_id,))
                 user = c.fetchone()
                 if user:
                     user_info = f"""
@@ -541,9 +590,12 @@ def admin_decision(call):
                             bot.send_message(admin, user_info, parse_mode="Markdown")
                         except:
                             pass
-                bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+                # إرسال القائمة الكاملة للمشرفين
                 for admin in ADMINS:
                     send_full_user_list(admin)
+                bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+                # إرسال معلومات المستخدم لنفسه
+                bot.send_message(target_id, f"📋 **معلومات حسابك المسجلة:**\n{user_info}", parse_mode="Markdown")
                 try:
                     bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم القبول ✅",
                                           call.message.chat.id, call.message.message_id)
