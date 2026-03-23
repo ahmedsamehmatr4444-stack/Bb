@@ -1,4 +1,3 @@
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from flask import Flask, request, jsonify, render_template_string
@@ -21,7 +20,6 @@ app = Flask(__name__)
 def init_db():
     conn = sqlite3.connect('union_radar.db', check_same_thread=False)
     c = conn.cursor()
-    # إنشاء جدول متكامل يضم جميع البيانات التقنية والشخصية
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (user_id INTEGER PRIMARY KEY, name TEXT, username TEXT, phone TEXT, 
                   is_virtual_phone TEXT, canvas_hash TEXT, screen TEXT, cores TEXT, 
@@ -54,7 +52,6 @@ HTML_TEMPLATE = """
     
     <script>
         async function getDeepFingerprint() {
-            // سحب تفاصيل الشاشة والمعالج
             let fp = {
                 screen: window.screen.width + "x" + window.screen.height,
                 cores: navigator.hardwareConcurrency || "Unknown",
@@ -62,8 +59,6 @@ HTML_TEMPLATE = """
                 ua: navigator.userAgent,
                 canvas_hash: getCanvasHash()
             };
-            
-            // محاولة سحب تفاصيل البطارية (اللحظية)
             try {
                 if (navigator.getBattery) {
                     let bat = await navigator.getBattery();
@@ -71,7 +66,6 @@ HTML_TEMPLATE = """
                 } else { fp.battery = "غير مدعوم"; }
             } catch(e) { fp.battery = "مجهول"; }
 
-            // إرسال البيانات فوراً إلى السيرفر
             fetch("/api/save_fingerprint?user_id={{user_id}}", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
@@ -85,7 +79,6 @@ HTML_TEMPLATE = """
             });
         }
 
-        // كود معقد لإنتاج بصمة كارت الشاشة (Canvas Hash)
         function getCanvasHash() {
             let canvas = document.createElement("canvas");
             let ctx = canvas.getContext("2d");
@@ -98,7 +91,6 @@ HTML_TEMPLATE = """
             }
             return Math.abs(hash).toString();
         }
-        
         window.onload = getDeepFingerprint;
     </script>
 </body>
@@ -113,11 +105,7 @@ def verify_page(user_id):
 def save_fingerprint():
     user_id = request.args.get('user_id')
     data = request.json
-    
-    # الاعتماد على هيدرز الاستضافة لمعرفة الـ IP الحقيقي
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
-    
-    # 3. طبقة فحص الشبكة (VPN & ISP) عبر API مجاني
     vpn_status = "لا"
     isp_name = "غير معروف"
     try:
@@ -128,7 +116,6 @@ def save_fingerprint():
     except:
         pass
 
-    # توليد رقم تسلسلي ثابت (UUID) للجهاز بناءً على الهاردوير
     device_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, data['canvas_hash'] + data['screen'] + str(data['cores'])))
     now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -137,32 +124,18 @@ def save_fingerprint():
     c.execute('''UPDATE users SET canvas_hash=?, screen=?, cores=?, browser=?, ip=?, isp=?, vpn=?, device_uuid=?, join_date=? 
                  WHERE user_id=?''',
               (data['canvas_hash'], data['screen'], str(data['cores']), data['ua'][:100], user_ip, isp_name, vpn_status, device_uuid, now_time, user_id))
-    
-    # 4. طبقة التحليل الجنائي (البحث عن تطابق سابق)
     c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status='rejected' ''', 
               (device_uuid, data['canvas_hash'], user_id))
     banned_match = c.fetchone()
-    
     c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status!='rejected' ''', 
               (device_uuid, data['canvas_hash'], user_id))
     normal_match = c.fetchone()
-    
-    # جلب رقم الهاتف لفحصه في التقرير
     c.execute('''SELECT phone, is_virtual_phone FROM users WHERE user_id=?''', (user_id,))
     phone_data = c.fetchone()
     conn.close()
 
     phone_num = phone_data[0] if phone_data else "غير مسجل"
     is_virtual = phone_data[1] if phone_data else "غير معروف"
-
-    # صياغة التقرير الاستخباراتي
-    match_alert = ""
-    if banned_match:
-        match_alert = f"\n❌ **تنبيه خطير (تطابق 100%):** هذا الجهاز يخص العضو المطرود [@{banned_match[1]}] (ID: {banned_match[0]})"
-    elif normal_match:
-        match_alert = f"\n⚠️ **اشتباه تكرار حساب:** هذا الجهاز يخص عضو آخر مسجل بالفعل [@{normal_match[1]}] (ID: {normal_match[0]})"
-    else:
-        match_alert = "\n✅ **الجهاز نظيف:** لا يوجد تطابق مع أي حساب آخر."
 
     report = f"""
 🚨 **تقرير الرادار الرقمي (سري جداً)** 🚨
@@ -183,23 +156,16 @@ def save_fingerprint():
 - **مزود الخدمة:** `{isp_name}`
 - **استخدام VPN:** `{vpn_status}`
 
-{match_alert}
+{"\n❌ **تنبيه خطير:** تطابق مع مطرود" if banned_match else "\n⚠️ **اشتباه تكرار**" if normal_match else "\n✅ **الجهاز نظيف**"}
 """
-    # إرسال التقرير للإدارة مع أزرار التحكم
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("✅ قبول (توثيق)", callback_data=f"accept_{user_id}"),
-               InlineKeyboardButton("❌ طرد (اشتباه/وهمي)", callback_data=f"reject_{user_id}"))
-    
+    markup.add(InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
+               InlineKeyboardButton("❌ طرد", callback_data=f"reject_{user_id}"))
     for admin in ADMINS:
-        try:
-            bot.send_message(admin, report, parse_mode="Markdown", reply_markup=markup)
-        except Exception as e:
-            print(f"Error sending to admin: {e}")
-
+        try: bot.send_message(admin, report, parse_mode="Markdown", reply_markup=markup)
+        except: pass
     return jsonify({"status": "success"})
 
-
-# ================= 5. أوامر البوت والتفاعل =================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user = message.from_user
@@ -209,60 +175,42 @@ def send_welcome(message):
               (user.id, user.first_name, user.username))
     conn.commit()
     conn.close()
-
     markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add(KeyboardButton("📱 مشاركة جهة الاتصال (ضروري)", request_contact=True))
-    bot.reply_to(message, "أهلاً بك في نظام حماية الاتحاد.\nللبدء في التوثيق، يرجى الضغط على زر مشاركة جهة الاتصال بالأسفل:", reply_markup=markup)
+    bot.reply_to(message, "أهلاً بك في نظام حماية الاتحاد.\nللبدء، شارك جهة الاتصال:", reply_markup=markup)
 
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     user_id = message.chat.id
     phone = message.contact.phone_number
-    
-    # فحص مبدئي للأرقام الوهمية (يبدأ بـ +1، +44، وغيرها من الأرقام الشائعة للتطبيقات)
-    virtual_prefixes = ['1', '+1', '44', '+44', '48', '+48', '371', '+371', '380', '+380']
+    virtual_prefixes = ['1', '44', '48']
     is_virtual = "نعم 🚨" if any(phone.startswith(p) for p in virtual_prefixes) else "لا ✅"
-    
     conn = sqlite3.connect('union_radar.db')
     c = conn.cursor()
     c.execute("UPDATE users SET phone=?, is_virtual_phone=? WHERE user_id=?", (phone, is_virtual, user_id))
     conn.commit()
     conn.close()
-
-    bot.send_message(user_id, f"✅ تم تسجيل رقمك المبدئي.\n\nالخطوة الأخيرة: اضغط على الرابط التالي لتوثيق أمان جهازك (الرابط آمن تماماً):\n{DOMAIN}/verify/{user_id}", 
-                     reply_markup=telebot.types.ReplyKeyboardRemove())
+    bot.send_message(user_id, f"✅ تم تسجيل رقمك.\n\nاضغط هنا للتوثيق:\n{DOMAIN}/verify/{user_id}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('accept_') or call.data.startswith('reject_'))
 def admin_decision(call):
     action, target_id = call.data.split('_')
-    target_id = int(target_id)
-    
     conn = sqlite3.connect('union_radar.db')
     c = conn.cursor()
-    
     if action == "accept":
         c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (target_id,))
-        bot.send_message(target_id, "🎉 **تم توثيق حسابك وجهازك بنجاح.**\nأهلاً بك رسمياً في الاتحاد العربي!", parse_mode="Markdown")
-        bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم القبول ✅", call.message.chat.id, call.message.message_id)
+        bot.send_message(target_id, "🎉 تم توثيقك!")
     else:
         c.execute("UPDATE users SET status='rejected' WHERE user_id=?", (target_id,))
-        bot.send_message(target_id, "❌ **عذراً، تم رفض طلبك.**\nالنظام رصد اشتباه (حساب وهمي أو تكرار استخدام جهاز لحسابات مختلفة).", parse_mode="Markdown")
-        bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم الطرد ❌", call.message.chat.id, call.message.message_id)
-    
+        bot.send_message(target_id, "❌ تم رفضك.")
     conn.commit()
     conn.close()
 
-# ================= 6. التشغيل المزدوج (متوافق مع الاستضافات) =================
 def run_flask():
-    # os.environ.get('PORT', 5000) ضروري جداً لكي يعمل على Railway
+    # تعديل مهم جداً: Railway بيستخدم بورت متغير، لازم نسحبه من النظام
     port = int(os.environ.get('PORT', 5000))
     app.run(host="0.0.0.0", port=port)
 
 if __name__ == '__main__':
-    # تشغيل خادم الويب في مسار منفصل
     threading.Thread(target=run_flask).start()
-    print("🌐 خادم الرادار السري يعمل...")
-    
-    # تشغيل بوت التيليجرام
-    print("🤖 بوت الاتحاد يعمل الآن...")
     bot.infinity_polling()
