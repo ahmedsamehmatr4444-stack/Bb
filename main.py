@@ -56,55 +56,36 @@ def init_db():
 
 init_db()
 
-# ================= وظائف مساعدة للكشف عن الأرقام الوهمية (محسنة) =================
+# ================= وظائف مساعدة =================
 def is_virtual_number(phone):
-    """
-    تحديد ما إذا كان الرقم وهمياً.
-    الآن يعتبر الرقم حقيقياً إلا إذا بدأ ببادئات معروفة للأرقام المؤقتة.
-    """
-    # قائمة البادئات التي تستخدمها تطبيقات الأرقام المؤقتة والوهمية
+    """تحديد ما إذا كان الرقم وهمياً"""
     virtual_prefixes = [
-        '+1',      # الولايات المتحدة (كثير من الأرقام الافتراضية)
-        '+44',     # المملكة المتحدة
-        '+48',     # بولندا
-        '+371',    # لاتفيا
-        '+380',    # أوكرانيا
-        '+972',    # إسرائيل (أرقام مؤقتة)
-        '+61',     # أستراليا
-        '+81',     # اليابان
-        '+49',     # ألمانيا
-        '+33',     # فرنسا
-        '+34',     # إسبانيا
-        '+39',     # إيطاليا
-        '+31',     # هولندا
-        '+46',     # السويد
-        '+47',     # النرويج
-        '+45',     # الدنمارك
-        '+32',     # بلجيكا
-        '+41',     # سويسرا
-        '+353',    # أيرلندا
-        '+351',    # البرتغال
-        '+30',     # اليونان
-        '+90',     # تركيا
-        '+966',    # السعودية (أرقام مؤقتة في بعض التطبيقات)
-        '+971',    # الإمارات
-        '+20'      # مصر (ملاحظة: هناك أرقام مصرية حقيقية أيضاً، سنستثنيها)
+        '+1', '+44', '+48', '+371', '+380', '+972', '+61', '+81', '+49', '+33',
+        '+34', '+39', '+31', '+46', '+47', '+45', '+32', '+41', '+353', '+351',
+        '+30', '+90', '+966', '+971', '+20'
     ]
-    # استثناء: الأرقام المصرية الحقيقية تبدأ بـ +20 أو 0
+    # استثناء الأرقام المصرية الحقيقية
     if phone.startswith('+20') or phone.startswith('0'):
         return "لا ✅ (رقم حقيقي)"
-
-    # نزيل علامة + للمقارنة
     cleaned = phone.replace('+', '').replace(' ', '').replace('-', '')
     for prefix in virtual_prefixes:
         clean_prefix = prefix.replace('+', '')
         if cleaned.startswith(clean_prefix):
             return "نعم 🚨 (رقم وهمي/مؤقت)"
-
-    # أي رقم آخر (مثل +34 حقيقي ولكن ليس في القائمة) يعتبر حقيقياً
     return "لا ✅ (رقم حقيقي)"
 
-# ================= قالب صفحة التوثيق =================
+def get_location(ip):
+    """الحصول على الموقع الجغرافي من IP"""
+    try:
+        r = requests.get(f"http://ip-api.com/json/{ip}?fields=status,country,city,regionName,lat,lon", timeout=3)
+        data = r.json()
+        if data.get('status') == 'success':
+            return f"{data.get('city', 'غير معروف')}, {data.get('regionName', '')} - {data.get('country', '')} (📍 {data.get('lat', '')}, {data.get('lon', '')})"
+    except:
+        pass
+    return "غير معروف"
+
+# ================= قالب صفحة التوثيق (مثل السابق) =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -114,64 +95,23 @@ HTML_TEMPLATE = """
     <title>توثيق الاتحاد العربي | Arab Union</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            text-align: center; 
-            background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%); 
-            color: #f8fafc; 
-            padding-top: 25%; 
-            margin: 0; 
-            overflow: hidden;
-        }
-        .loader-container {
-            position: relative;
-            width: 80px;
-            height: 80px;
-            margin: 0 auto 30px auto;
-        }
-        .loader { 
-            border: 5px solid rgba(59, 130, 246, 0.1); 
-            border-top: 5px solid #3b82f6; 
-            border-radius: 50%; 
-            width: 80px; 
-            height: 80px; 
-            animation: spin 1s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite; 
-            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
-            margin: 0 auto;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%); color: #f8fafc; padding-top: 25%; margin: 0; overflow: hidden; }
+        .loader-container { position: relative; width: 80px; height: 80px; margin: 0 auto 30px auto; }
+        .loader { border: 5px solid rgba(59, 130, 246, 0.1); border-top: 5px solid #3b82f6; border-radius: 50%; width: 80px; height: 80px; animation: spin 1s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite; box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); margin: 0 auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
-        h2 { 
-            font-size: 1.4rem; 
-            font-weight: bold; 
-            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
-            background: linear-gradient(to bottom, #ffffff, #94a3b8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
+        h2 { font-size: 1.4rem; font-weight: bold; text-shadow: 0 2px 10px rgba(0,0,0,0.5); background: linear-gradient(to bottom, #ffffff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         #sub-status { color: #64748b; font-size: 0.9rem; margin-top: 10px; }
-        
-        .success-mode h2 { 
-            -webkit-text-fill-color: #22c55e; 
-            text-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
-        }
-        .error-mode h2 {
-            -webkit-text-fill-color: #ef4444;
-            text-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
-        }
+        .success-mode h2 { -webkit-text-fill-color: #22c55e; text-shadow: 0 0 10px rgba(34, 197, 94, 0.4); }
+        .error-mode h2 { -webkit-text-fill-color: #ef4444; text-shadow: 0 0 10px rgba(239, 68, 68, 0.4); }
     </style>
 </head>
 <body>
-    <div class="loader-container">
-        <div class="loader" id="spinner"></div>
-    </div>
+    <div class="loader-container"><div class="loader" id="spinner"></div></div>
     <h2 id="status">⏳ جاري فحص أمان الجهاز وتوثيق الحساب...</h2>
     <p id="sub-status">يرجى عدم إغلاق هذه الصفحة لضمان اكتمال التوثيق</p>
-    
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
-
         async function getDeepFingerprint() {
             let fp = {
                 screen: window.screen.width + "x" + window.screen.height,
@@ -186,7 +126,6 @@ HTML_TEMPLATE = """
                     fp.battery = Math.round(bat.level * 100) + "% " + (bat.charging ? "⚡يتم الشحن" : "🔋");
                 } else { fp.battery = "غير مدعوم"; }
             } catch(e) { fp.battery = "مجهول"; }
-
             fetch("/api/save_fingerprint?user_id={{user_id}}", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
@@ -208,7 +147,6 @@ HTML_TEMPLATE = """
                 setTimeout(() => { tg.close(); }, 3000);
             });
         }
-
         function getCanvasHash() {
             let canvas = document.createElement("canvas");
             let ctx = canvas.getContext("2d");
@@ -248,6 +186,11 @@ def save_fingerprint():
 
     data = request.json
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
+    
+    # جلب معلومات الموقع
+    location = get_location(user_ip)
+
+    # تحليل VPN و ISP
     vpn_status = "لا"
     isp_name = "غير معروف"
     try:
@@ -261,7 +204,7 @@ def save_fingerprint():
     device_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, data['canvas_hash'] + data['screen'] + str(data['cores'])))
     now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # استخدام القفل وتكرار المحاولة
+    # تحديث بيانات المستخدم في قاعدة البيانات (مع إعادة المحاولة)
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -270,17 +213,15 @@ def save_fingerprint():
                 c.execute('''UPDATE users SET canvas_hash=?, screen=?, cores=?, browser=?, ip=?, isp=?, vpn=?, device_uuid=?, join_date=? 
                              WHERE user_id=?''',
                           (data['canvas_hash'], data['screen'], str(data['cores']), data['ua'][:100], user_ip, isp_name, vpn_status, device_uuid, now_time, user_id))
-                
+                # استعلامات إضافية
                 c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status='rejected' ''', 
                           (device_uuid, data['canvas_hash'], user_id))
                 banned_match = c.fetchone()
-                
                 c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status!='rejected' ''', 
                           (device_uuid, data['canvas_hash'], user_id))
                 normal_match = c.fetchone()
-                
-                c.execute('''SELECT phone, is_virtual_phone FROM users WHERE user_id=?''', (user_id,))
-                phone_data = c.fetchone()
+                c.execute('''SELECT phone, is_virtual_phone, status FROM users WHERE user_id=?''', (user_id,))
+                user_data = c.fetchone()
                 conn.commit()
                 break
         except sqlite3.OperationalError as e:
@@ -288,13 +229,21 @@ def save_fingerprint():
                 time.sleep(0.5 * (attempt + 1))
                 continue
             else:
-                logging.error(f"Database error after {attempt+1} attempts: {e}")
-                return jsonify({"error": "database busy, try again"}), 503
+                logging.error(f"Database error: {e}")
+                return jsonify({"error": "database busy"}), 503
 
-    phone_num = phone_data['phone'] if phone_data else "غير مسجل"
-    is_virtual = phone_data['is_virtual_phone'] if phone_data else "غير معروف"
+    if not user_data:
+        return jsonify({"error": "user not found"}), 404
 
-    # تحديد ما إذا كان المستخدم مشبوهاً
+    phone_num = user_data['phone'] if user_data['phone'] else "غير مسجل"
+    is_virtual = user_data['is_virtual_phone'] if user_data['is_virtual_phone'] else "غير معروف"
+    current_status = user_data['status']
+
+    # إذا كان المستخدم مقبولاً بالفعل، لا نسمح بإعادة التوثيق
+    if current_status == 'accepted':
+        return jsonify({"error": "user already accepted"}), 400
+
+    # تحديد الشبهة
     is_suspicious = False
     if banned_match:
         security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match['user_id']}, @{banned_match['username']})"
@@ -311,7 +260,7 @@ def save_fingerprint():
     else:
         security_note = "\n✅ **الجهاز نظيف**"
 
-    # بناء التقرير (يُرسل للمشرفين في جميع الأحوال)
+    # بناء التقرير مع الموقع
     report = f"""
 🚨 **تقرير الرادار الرقمي (سري جداً)** 🚨
 ━━━━━━━━━━━━━━━━━
@@ -321,19 +270,20 @@ def save_fingerprint():
 - **رقم وهمي؟:** `{is_virtual}`
 
 📱 **الهوية الصلبة (Hardware):**
-- **البصمة الرقمية للجهاز (معرف فريد):** `{device_uuid}`
-- **بصمة الـ Canvas:** `{data['canvas_hash']}`
+- **البصمة الرقمية للجهاز:** `{device_uuid}`
+- **بصمة Canvas:** `{data['canvas_hash']}`
 - **الشاشة | المعالج:** `{data['screen']} | {data['cores']} Cores`
-- **البطارية لحظياً:** `{data.get('battery', 'N/A')}`
+- **البطارية:** `{data.get('battery', 'N/A')}`
 
 🌐 **بيانات الشبكة:**
 - **الـ IP:** `{user_ip}`
+- **الموقع:** `{location}`
 - **مزود الخدمة:** `{isp_name}`
-- **استخدام VPN:** `{vpn_status}`
+- **VPN:** `{vpn_status}`
 {security_note}
 """
     if is_suspicious:
-        # إرسال التقرير للمشرفين لاتخاذ القرار
+        # إرسال تقرير للمشرفين مع أزرار القبول/الرفض
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
                    InlineKeyboardButton("❌ طرد", callback_data=f"reject_{user_id}"))
@@ -343,21 +293,19 @@ def save_fingerprint():
             except Exception as e:
                 logging.error(f"Failed to send to admin {admin}: {e}")
     else:
-        # المستخدم نظيف: قبول تلقائي
+        # قبول تلقائي
         with get_db_connection() as conn:
             c = conn.cursor()
             c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (user_id,))
             conn.commit()
         bot.send_message(user_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
-        # إرسال القائمة الكاملة للمشرفين
         for admin in ADMINS:
             send_full_user_list(admin)
-        # إرسال نسخة من التقرير للمشرفين للإطلاع (بدون أزرار)
-        for admin in ADMINS:
+            # إرسال نسخة من التقرير للإطلاع
             try:
                 bot.send_message(admin, report + "\n✅ **تم القبول تلقائياً (جهاز نظيف)**", parse_mode="Markdown")
-            except Exception as e:
-                logging.error(f"Failed to send auto-accept report to admin {admin}: {e}")
+            except:
+                pass
 
     return jsonify({"status": "success"})
 
@@ -371,7 +319,7 @@ def webhook():
         return 'OK', 200
     return 'Bad Request', 400
 
-# ================= وظيفة لإرسال قائمة جميع المستخدمين =================
+# ================= وظيفة إرسال القائمة الكاملة =================
 def send_full_user_list(admin_id):
     """إرسال قائمة كاملة بجميع المستخدمين المسجلين إلى المشرف"""
     try:
@@ -401,7 +349,7 @@ def send_full_user_list(admin_id):
         msg += f"📞 الهاتف: {user['phone']}\n"
         msg += f"🔍 وهمي؟: {user['is_virtual_phone']}\n"
         msg += f"🔐 الحالة: {user['status']}\n"
-        msg += f"🖥️ البصمة الرقمية للجهاز: `{user['device_uuid']}`\n"
+        msg += f"🖥️ البصمة الرقمية: `{user['device_uuid']}`\n"
         msg += f"🎨 بصمة Canvas: `{user['canvas_hash']}`\n"
         msg += f"📱 الشاشة: {user['screen']} | المعالج: {user['cores']} نواة\n"
         msg += f"🌍 IP: {user['ip']} | ISP: {user['isp']}\n"
@@ -420,16 +368,60 @@ def send_full_user_list(admin_id):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user = message.from_user
+    user_id = user.id
+    current_username = user.username
+    current_name = user.first_name
+
     try:
         with get_db_connection() as conn:
             c = conn.cursor()
-            c.execute("INSERT OR IGNORE INTO users (user_id, name, username, status) VALUES (?, ?, ?, 'pending')", 
-                      (user.id, user.first_name, user.username))
-            conn.commit()
+            c.execute("SELECT username, status FROM users WHERE user_id=?", (user_id,))
+            existing = c.fetchone()
     except Exception as e:
         logging.error(f"Error in start: {e}")
         bot.reply_to(message, "حدث خطأ في النظام، حاول مرة أخرى لاحقاً.")
         return
+
+    if existing:
+        stored_username = existing['username']
+        status = existing['status']
+
+        if status == 'accepted':
+            # التحقق من تغيير اليوزر
+            if stored_username != current_username:
+                alert = f"""
+⚠️ **تغيير مشبوه في الحساب المقبول** ⚠️
+━━━━━━━━━━━━━━━━━
+👤 **المستخدم:** {current_name} (ID: {user_id})
+🆔 **اليوزر القديم:** @{stored_username if stored_username else 'لا يوجد'}
+🆔 **اليوزر الجديد:** @{current_username if current_username else 'لا يوجد'}
+⏰ **التاريخ:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+                for admin in ADMINS:
+                    try:
+                        bot.send_message(admin, alert, parse_mode="Markdown")
+                    except:
+                        pass
+                # تحديث اليوزر في قاعدة البيانات (لأنه تغير)
+                with get_db_connection() as conn:
+                    c = conn.cursor()
+                    c.execute("UPDATE users SET username=? WHERE user_id=?", (current_username, user_id))
+                    conn.commit()
+                bot.reply_to(message, "⚠️ تم تغيير اسم المستخدم الخاص بك. تم إبلاغ الإدارة للتأكد من هويتك. إذا كنت أنت، لا تقلق، سيتم مراجعة الأمر.")
+            else:
+                bot.reply_to(message, "✅ أنت مسجل بالفعل في الاتحاد العربي. إذا احتجت إلى تعديل بياناتك، تواصل مع الإدارة.")
+            return
+        else:
+            # حالة pending أو rejected
+            bot.reply_to(message, "📝 لديك طلب توثيق قيد المراجعة. يرجى الانتظار حتى يتم البت فيه من قبل الإدارة.")
+            return
+
+    # مستخدم جديد
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("INSERT INTO users (user_id, name, username, status) VALUES (?, ?, ?, 'pending')", 
+                  (user_id, current_name, current_username))
+        conn.commit()
 
     markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add(KeyboardButton("📱 مشاركة جهة الاتصال (ضروري)", request_contact=True))
@@ -440,21 +432,59 @@ def handle_contact(message):
     user_id = message.chat.id
     phone = message.contact.phone_number
     is_virtual = is_virtual_number(phone)
-    
+
     try:
         with get_db_connection() as conn:
             c = conn.cursor()
-            c.execute("UPDATE users SET phone=?, is_virtual_phone=? WHERE user_id=?", (phone, is_virtual, user_id))
-            conn.commit()
+            c.execute("SELECT status, phone FROM users WHERE user_id=?", (user_id,))
+            existing = c.fetchone()
     except Exception as e:
         logging.error(f"Error in contact: {e}")
         bot.send_message(user_id, "حدث خطأ في حفظ الرقم، حاول مرة أخرى.")
         return
-    
+
+    if not existing:
+        bot.send_message(user_id, "حدث خطأ، يرجى استخدام /start من جديد.")
+        return
+
+    status = existing['status']
+    stored_phone = existing['phone']
+
+    if status == 'accepted':
+        # إذا كان الرقم مختلفاً عن المخزن، أرسل تحذيراً
+        if stored_phone != phone:
+            alert = f"""
+⚠️ **تغيير مشبوه في رقم هاتف مستخدم مقبول** ⚠️
+━━━━━━━━━━━━━━━━━
+👤 **المستخدم:** {message.from_user.first_name} (ID: {user_id})
+📞 **الرقم القديم:** {stored_phone}
+📞 **الرقم الجديد:** {phone}
+⏰ **التاريخ:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+            for admin in ADMINS:
+                try:
+                    bot.send_message(admin, alert, parse_mode="Markdown")
+                except:
+                    pass
+            # تحديث الرقم في قاعدة البيانات (لأنه تغير)
+            with get_db_connection() as conn:
+                c = conn.cursor()
+                c.execute("UPDATE users SET phone=?, is_virtual_phone=? WHERE user_id=?", (phone, is_virtual, user_id))
+                conn.commit()
+            bot.send_message(user_id, "⚠️ تم تغيير رقم هاتفك. تم إبلاغ الإدارة للتحقق. إذا كنت أنت، فلا تقلق.")
+        else:
+            bot.send_message(user_id, "✅ أنت مسجل بالفعل. يمكنك استخدام البوت بشكل طبيعي.")
+        return
+
+    # المستخدم ليس مقبولاً، نقوم بحفظ الرقم
+    with get_db_connection() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE users SET phone=?, is_virtual_phone=? WHERE user_id=?", (phone, is_virtual, user_id))
+        conn.commit()
+
     markup = InlineKeyboardMarkup()
     web_app_url = f"{DOMAIN}/verify/{user_id}"
     markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=web_app_url)))
-    
     bot.send_message(user_id, "✅ تم تسجيل رقم الهاتف.\n\nالآن اضغط على الزر بالأسفل لتوثيق جهازك بالكامل داخل التليجرام:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('accept_') or call.data.startswith('reject_'))
@@ -490,7 +520,7 @@ def admin_decision(call):
 
     bot.answer_callback_query(call.id, "تم تنفيذ القرار")
 
-# ================= إعداد webhook (للإنتاج فقط) =================
+# ================= إعداد webhook =================
 def setup_webhook():
     time.sleep(3)
     webhook_url = f"{DOMAIN}/webhook"
