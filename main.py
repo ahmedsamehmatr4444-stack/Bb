@@ -7,7 +7,7 @@ import uuid
 import os
 import datetime
 
-# ================= الإعدادات الأساسية (تؤخذ من متغيرات البيئة) =================
+# ================= الإعدادات الأساسية =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg")
 ADMINS_STR = os.environ.get("ADMINS", "1358013723,8147516847")
 ADMINS = [int(x.strip()) for x in ADMINS_STR.split(",") if x.strip().isdigit()]
@@ -16,7 +16,7 @@ DOMAIN = os.environ.get("DOMAIN", "https://bb-production-7996.up.railway.app")
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# ================= 1. قاعدة البيانات =================
+# ================= قاعدة البيانات =================
 def init_db():
     conn = sqlite3.connect('union_radar.db', check_same_thread=False)
     c = conn.cursor()
@@ -30,7 +30,7 @@ def init_db():
 
 init_db()
 
-# ================= 2. قالب صفحة التوثيق =================
+# ================= قالب صفحة التوثيق =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -141,7 +141,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# ================= 3. مسارات Flask =================
+# ================= مسارات Flask =================
 @app.route('/')
 def index():
     return "Bot is running!"
@@ -234,7 +234,7 @@ def save_fingerprint():
             print(f"Failed to send to admin {admin}: {e}")
     return jsonify({"status": "success"})
 
-# ================= 4. مسار webhook =================
+# ================= مسار webhook =================
 @app.route('/webhook', methods=['POST'])
 def webhook():
     if request.headers.get('content-type') == 'application/json':
@@ -244,7 +244,7 @@ def webhook():
         return 'OK', 200
     return 'Bad Request', 400
 
-# ================= 5. أوامر البوت =================
+# ================= أوامر البوت =================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user = message.from_user
@@ -301,7 +301,7 @@ def admin_decision(call):
     conn.close()
     bot.answer_callback_query(call.id, "تم تنفيذ القرار")
 
-# ================= 6. إعداد webhook =================
+# ================= إعداد webhook =================
 def set_webhook():
     webhook_url = f"{DOMAIN}/webhook"
     try:
@@ -311,12 +311,11 @@ def set_webhook():
     except Exception as e:
         print(f"❌ Error setting webhook: {e}")
 
-# ================= 7. نقطة الدخول =================
+# ================= نقطة الدخول =================
 if __name__ == '__main__':
-    # تشغيل محلي باستخدام polling
+    # للتشغيل المحلي
     print("Running locally with polling...")
     bot.remove_webhook()
     bot.infinity_polling(skip_pending=True)
 else:
-    # عند التشغيل عبر gunicorn (في Railway)
     set_webhook()
