@@ -60,7 +60,6 @@ def parse_user_agent(ua):
     ua_lower = ua.lower()
     if 'android' in ua_lower:
         os_type = "🤖 Android"
-        # أنماط مختلفة لاستخراج اسم الجهاز
         patterns = [
             r';\s([^;]+?)\s?(?:Build/|\))',
             r'Android\s[\d\.]+;\s([^;]+);',
@@ -72,7 +71,6 @@ def parse_user_agent(ua):
             if match:
                 device = match.group(1).strip()
                 break
-        # تنسيق أسماء الأجهزة الشائعة
         device = device.replace('_', ' ').replace('-', ' ')
     elif 'iphone' in ua_lower or 'ipad' in ua_lower:
         os_type = "🍎 iOS"
@@ -103,7 +101,7 @@ def get_location_and_isp(ip):
     location = "غير معروف"
     isp = "غير معروف"
     vpn = False
-    # محاولة 1: ip-api.com (سريع ومجاني)
+    # محاولة 1: ip-api.com
     try:
         r = requests.get(f"http://ip-api.com/json/{ip}?fields=status,country,city,regionName,lat,lon,isp,proxy", timeout=5)
         data = r.json()
@@ -125,7 +123,7 @@ def get_location_and_isp(ip):
             return location, isp, vpn
     except:
         pass
-    # محاولة 3: ipinfo.io (بدون token محدود)
+    # محاولة 3: ipinfo.io
     try:
         r = requests.get(f"https://ipinfo.io/{ip}/json", timeout=5)
         data = r.json()
@@ -153,7 +151,7 @@ def is_virtual_number(phone):
             return "نعم 🚨 (رقم وهمي/مؤقت)"
     return "لا ✅ (رقم حقيقي)"
 
-# ================= قالب صفحة التوثيق (مع شرح الميزات) =================
+# ================= قالب صفحة التوثيق =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -244,7 +242,6 @@ def index():
 
 @app.route('/verify/<int:user_id>')
 def verify_page(user_id):
-    # التحقق من حالة المستخدم قبل عرض الصفحة
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute("SELECT status FROM users WHERE user_id=?", (user_id,))
@@ -265,7 +262,6 @@ def save_fingerprint():
     except:
         return jsonify({"error": "invalid user_id"}), 400
 
-    # التحقق من حالة المستخدم أولاً
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute("SELECT status FROM users WHERE user_id=?", (user_id,))
@@ -279,7 +275,6 @@ def save_fingerprint():
 
     data = request.json
     user_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0]
-    # جلب الموقع والـ ISP
     location, isp, vpn = get_location_and_isp(user_ip)
     vpn_status = "نعم 🚨 (مشبوه)" if vpn else "لا ✅"
     device_info = parse_user_agent(data['ua'])
@@ -287,7 +282,6 @@ def save_fingerprint():
     device_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, data['canvas_hash'] + data['screen'] + str(data['cores'])))
     now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # تحديث قاعدة البيانات
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -296,15 +290,14 @@ def save_fingerprint():
                 c.execute('''UPDATE users SET canvas_hash=?, screen=?, cores=?, browser=?, ip=?, isp=?, vpn=?, device_uuid=?, join_date=? 
                              WHERE user_id=?''',
                           (data['canvas_hash'], data['screen'], str(data['cores']), data['ua'][:200], user_ip, isp, vpn_status, device_uuid, now_time, user_id))
-                # التحقق من تطابقات الجهاز مع مطرودين أو مستخدمين آخرين
                 c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status='rejected' ''',
                           (device_uuid, data['canvas_hash'], user_id))
                 banned_match = c.fetchone()
                 c.execute('''SELECT user_id, username FROM users WHERE (device_uuid=? OR canvas_hash=?) AND user_id!=? AND status!='rejected' ''',
                           (device_uuid, data['canvas_hash'], user_id))
                 normal_match = c.fetchone()
-                c.execute('''SELECT phone, is_virtual_phone FROM users WHERE user_id=?''', (user_id,))
-                phone_data = c.fetchone()
+                c.execute('''SELECT phone, is_virtual_phone, name, username FROM users WHERE user_id=?''', (user_id,))
+                user_data = c.fetchone()
                 conn.commit()
                 break
         except sqlite3.OperationalError as e:
@@ -314,10 +307,14 @@ def save_fingerprint():
             else:
                 return jsonify({"error": "database busy"}), 503
 
-    phone_num = phone_data['phone'] if phone_data else "غير مسجل"
-    is_virtual = phone_data['is_virtual_phone'] if phone_data else "غير معروف"
+    if not user_data:
+        return jsonify({"error": "user data missing"}), 404
 
-    # تحديد الشبهة
+    phone_num = user_data['phone'] if user_data['phone'] else "غير مسجل"
+    is_virtual = user_data['is_virtual_phone'] if user_data['is_virtual_phone'] else "غير معروف"
+    user_name = user_data['name']
+    user_username = user_data['username'] if user_data['username'] else "لا يوجد"
+
     is_suspicious = False
     if banned_match:
         security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match['user_id']}, @{banned_match['username']})"
@@ -334,16 +331,15 @@ def save_fingerprint():
     else:
         security_note = "\n✅ **الجهاز نظيف**"
 
-    # شرح الميزات
     features_explanation = """
 📖 **شرح البيانات المسجلة:**
 ━━━━━━━━━━━━━━━━━
-🎨 **بصمة Canvas:** طريقة لتحديد المتصفح وجهازك بشكل فريد (لا تتغير إلا بتغيير المتصفح).
+🎨 **بصمة Canvas:** طريقة لتحديد المتصفح وجهازك بشكل فريد.
 📱 **الشاشة وعدد النوى:** تعطي فكرة عن نوع الجهاز (هاتف/كمبيوتر) وقوته.
-🔋 **البطارية:** تساعد في التمييز بين الأجهزة المختلفة (نسبة الشحن وحالة الشحن).
-🌍 **الـ IP والموقع:** يُظهر المكان الجغرافي التقريبي لاتصالك بالإنترنت.
-🔌 **مزود الخدمة (ISP):** الشركة المزودة للإنترنت (ضروري للكشف عن الأرقام الوهمية).
-🛡️ **VPN:** إذا كنت تستخدم شبكة افتراضية خاصة، قد يشير ذلك إلى محاولة إخفاء الهوية.
+🔋 **البطارية:** تساعد في التمييز بين الأجهزة المختلفة.
+🌍 **الـ IP والموقع:** يُظهر المكان الجغرافي التقريبي لاتصالك.
+🔌 **مزود الخدمة (ISP):** الشركة المزودة للإنترنت.
+🛡️ **VPN:** إذا كنت تستخدم شبكة افتراضية خاصة، قد يشير إلى محاولة إخفاء الهوية.
 🖥️ **نظام التشغيل والجهاز:** نوع الجهاز ونظام التشغيل المستخدم.
 """
 
@@ -351,6 +347,8 @@ def save_fingerprint():
 🚨 **تقرير الرادار الرقمي (سري جداً)** 🚨
 ━━━━━━━━━━━━━━━━━
 👤 **بيانات الحساب:**
+- **الاسم:** {user_name}
+- **اليوزر:** @{user_username}
 - **الآي دي:** `{user_id}`
 - **الهاتف:** `{phone_num}`
 - **رقم وهمي؟:** `{is_virtual}`
@@ -386,13 +384,17 @@ def save_fingerprint():
             c = conn.cursor()
             c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (user_id,))
             conn.commit()
-        bot.send_message(user_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+        # إرسال معلومات المستخدم الجديد للمشرفين
         for admin in ADMINS:
-            send_full_user_list(admin)
             try:
-                bot.send_message(admin, report + "\n✅ **تم القبول تلقائياً (جهاز نظيف)**", parse_mode="Markdown")
+                bot.send_message(admin, f"✅ **تم قبول مستخدم جديد تلقائياً:**\n{report}", parse_mode="Markdown")
             except:
                 pass
+        # إرسال القائمة الكاملة للمشرفين
+        for admin in ADMINS:
+            send_full_user_list(admin)
+        bot.send_message(user_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+
     return jsonify({"status": "success"})
 
 # ================= مسار webhook =================
@@ -407,13 +409,14 @@ def webhook():
 
 # ================= وظيفة إرسال القائمة الكاملة =================
 def send_full_user_list(admin_id):
+    """إرسال قائمة كاملة بجميع المستخدمين المسجلين (القايمة)"""
     try:
         with get_db_connection() as conn:
             c = conn.cursor()
             c.execute('''SELECT user_id, name, username, phone, is_virtual_phone, 
                               canvas_hash, screen, cores, browser, ip, isp, vpn, 
                               device_uuid, join_date, status 
-                         FROM users ORDER BY join_date DESC''')
+                         FROM users WHERE status='accepted' ORDER BY join_date DESC''')
             users = c.fetchall()
     except Exception as e:
         logging.error(f"Error fetching users: {e}")
@@ -424,7 +427,7 @@ def send_full_user_list(admin_id):
         bot.send_message(admin_id, "📭 لا يوجد أي مستخدم مسجل حتى الآن.")
         return
 
-    msg = "📋 **قائمة المستخدمين المسجلين (كامل التفاصيل)**\n━━━━━━━━━━━━━━━━━\n"
+    msg = "📋 **قائمة اللاعبين المسجلين (القايمة الكاملة)**\n━━━━━━━━━━━━━━━━━\n"
     count = 0
     for user in users:
         count += 1
@@ -466,7 +469,6 @@ def send_welcome(message):
             # pending – يمكنه متابعة التسجيل
             pass
     else:
-        # مستخدم جديد
         with get_db_connection() as conn:
             c = conn.cursor()
             c.execute("INSERT INTO users (user_id, name, username, status) VALUES (?, ?, ?, 'pending')",
@@ -480,7 +482,6 @@ def send_welcome(message):
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
     user_id = message.chat.id
-    # التحقق من الحالة أولاً
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute("SELECT status FROM users WHERE user_id=?", (user_id,))
@@ -517,6 +518,29 @@ def admin_decision(call):
             if action == "accept":
                 c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (target_id,))
                 conn.commit()
+                # جلب معلومات المستخدم المقبول
+                c.execute("SELECT name, username, phone, is_virtual_phone, canvas_hash, screen, cores, ip, isp, vpn, device_uuid, join_date FROM users WHERE user_id=?", (target_id,))
+                user = c.fetchone()
+                if user:
+                    user_info = f"""
+✅ **تم قبول المستخدم يدوياً:**
+━━━━━━━━━━━━━━━━━
+👤 **الاسم:** {user['name']}
+🆔 **اليوزر:** @{user['username'] if user['username'] else 'لا يوجد'}
+📞 **الهاتف:** {user['phone']}
+🔍 **وهمي؟:** {user['is_virtual_phone']}
+🖥️ **البصمة الرقمية:** `{user['device_uuid']}`
+🎨 **بصمة Canvas:** `{user['canvas_hash']}`
+📱 **الشاشة:** {user['screen']} | **المعالج:** {user['cores']} نواة
+🌍 **IP:** {user['ip']} | **ISP:** {user['isp']}
+🔒 **VPN:** {user['vpn']}
+📅 **تاريخ التسجيل:** {user['join_date']}
+"""
+                    for admin in ADMINS:
+                        try:
+                            bot.send_message(admin, user_info, parse_mode="Markdown")
+                        except:
+                            pass
                 bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
                 for admin in ADMINS:
                     send_full_user_list(admin)
