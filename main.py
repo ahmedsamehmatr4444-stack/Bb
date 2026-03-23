@@ -2,7 +2,6 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
 from flask import Flask, request, jsonify, render_template_string
 import sqlite3
-import threading
 import requests
 import uuid
 import os
@@ -10,14 +9,14 @@ import datetime
 
 # ================= الإعدادات الأساسية =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8764397517:AAHNtkUYi15yT8IrkDaK954PBQtgywJ5Mfg")
-# قائمة معرفات الأدمن (تأكد من صحتها، معرفات تليجرام تكون 9-10 أرقام)
 ADMINS = [int(x) for x in os.environ.get("ADMINS", "18147516847,1358013723").split(",") if x.strip().isdigit()]
 DOMAIN = os.environ.get("DOMAIN", "https://bb-production-7996.up.railway.app")
+USE_WEBHOOK = os.environ.get("USE_WEBHOOK", "true").lower() == "true"  # استخدم webhook في الإنتاج
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# ================= 1. طبقة قاعدة البيانات =================
+# ================= 1. قاعدة البيانات =================
 def init_db():
     conn = sqlite3.connect('union_radar.db', check_same_thread=False)
     c = conn.cursor()
@@ -31,7 +30,7 @@ def init_db():
 
 init_db()
 
-# ================= 2. طبقة الـ Web App =================
+# ================= 2. قالب صفحة الويب =================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -143,6 +142,10 @@ HTML_TEMPLATE = """
 """
 
 # ================= 3. مسارات Flask =================
+@app.route('/')
+def index():
+    return "Bot is running!"
+
 @app.route('/verify/<int:user_id>')
 def verify_page(user_id):
     return render_template_string(HTML_TEMPLATE, user_id=user_id)
@@ -193,7 +196,6 @@ def save_fingerprint():
     phone_num = phone_data[0] if phone_data else "غير مسجل"
     is_virtual = phone_data[1] if phone_data else "غير معروف"
 
-    # تحديد رسالة الأمان بناءً على المطابقات
     if banned_match:
         security_note = "\n❌ **تنبيه خطير:** تطابق مع مطرود"
     elif normal_match:
@@ -231,67 +233,35 @@ def save_fingerprint():
             print(f"Failed to send to admin {admin}: {e}")
     return jsonify({"status": "success"})
 
-# ================= 4. أوامر البوت =================
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    user = message.from_user
-    conn = sqlite3.connect('union_radar.db')
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id, name, username, status) VALUES (?, ?, ?, 'pending')", 
-              (user.id, user.first_name, user.username))
-    conn.commit()
-    conn.close()
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add(KeyboardButton("📱 مشاركة جهة الاتصال (ضروري)", request_contact=True))
-    bot.reply_to(message, "أهلاً بك في نظام حماية الاتحاد العربي.\nللبدء، يرجى مشاركة جهة الاتصال الخاصة بك:", reply_markup=markup)
+# ================= 4. مسار webhook للبوت =================
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_str = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+        return 'OK', 200
+    return 'Bad Request', 400
 
-@bot.message_handler(content_types=['contact'])
-def handle_contact(message):
-    user_id = message.chat.id
-    phone = message.contact.phone_number
-    virtual_prefixes = ['1', '44', '48']
-    is_virtual = "نعم 🚨" if any(phone.startswith(p) for p in virtual_prefixes) else "لا ✅"
-    
-    conn = sqlite3.connect('union_radar.db')
-    c = conn.cursor()
-    c.execute("UPDATE users SET phone=?, is_virtual_phone=? WHERE user_id=?", (phone, is_virtual, user_id))
-    conn.commit()
-    conn.close()
-    
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🔐 دخول بوابة التوثيق الآمن", web_app=WebAppInfo(url=f"{DOMAIN}/verify/{user_id}")))
-    
-    bot.send_message(user_id, "✅ تم تسجيل رقم الهاتف.\n\nالآن اضغط على الزر بالأسفل لتوثيق جهازك بالكامل داخل التليجرام:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('accept_') or call.data.startswith('reject_'))
-def admin_decision(call):
-    action, target_id = call.data.split('_')
-    conn = sqlite3.connect('union_radar.db')
-    c = conn.cursor()
-    if action == "accept":
-        c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (target_id,))
-        bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
+# ================= 5. إعداد webhook عند بدء التشغيل =================
+def set_webhook():
+    if USE_WEBHOOK:
+        webhook_url = f"{DOMAIN}/webhook"
+        bot.remove_webhook()
+        bot.set_webhook(url=webhook_url)
+        print(f"Webhook set to {webhook_url}")
     else:
-        c.execute("UPDATE users SET status='rejected' WHERE user_id=?", (target_id,))
-        bot.send_message(target_id, "❌ نعتذر، تم رفض طلب توثيقك.")
-    conn.commit()
-    conn.close()
-    bot.answer_callback_query(call.id, "تم تنفيذ القرار")
+        # عند التشغيل المحلي باستخدام polling
+        bot.remove_webhook()
+        threading.Thread(target=bot.infinity_polling, kwargs={'skip_pending': True}, daemon=True).start()
+        print("Polling started (local mode)")
 
-# ================= 5. تشغيل البوت في خيط منفصل =================
-def start_bot():
-    # إزالة webhooks إن وجدت (للتأكد من استخدام polling)
-    bot.remove_webhook()
-    bot.infinity_polling(skip_pending=True)
-
-# ================= 6. نقطة الدخول للـ gunicorn أو التشغيل المباشر =================
+# ================= 6. تشغيل التطبيق =================
 if __name__ == '__main__':
-    # تشغيل محلي: نبدأ البوت في خيط منفصل، ثم نشغل Flask
-    bot_thread = threading.Thread(target=start_bot, daemon=True)
-    bot_thread.start()
+    # للتشغيل المحلي (python app.py)
     port = int(os.environ.get('PORT', 5000))
+    set_webhook()  # ستبدأ polling إذا كان USE_WEBHOOK=False
     app.run(host='0.0.0.0', port=port)
 else:
-    # عند الاستيراد بواسطة gunicorn: نبدأ البوت في خيط غير daemon
-    bot_thread = threading.Thread(target=start_bot, daemon=False)
-    bot_thread.start()
+    # عند التشغيل عبر gunicorn، نضبط webhook قبل بدء السيرفر
+    set_webhook()
