@@ -13,10 +13,10 @@ import logging
 # إعداد التسجيل
 logging.basicConfig(level=logging.INFO)
 
-# ================= الإعدادات الأساسية (مضمنة مباشرة) =================
+# ================= الإعدادات الأساسية (مضمنة) =================
 BOT_TOKEN = "8764397517:AAEKRxpwiWp_Ow2puiu_dPLqknJx1_Q2u9E"
 ADMINS = [1358013723, 8147516847]          # معرفات المشرفين
-DOMAIN = "https://bb-production-7996.up.railway.app"   # رابط التطبيق
+DOMAIN = "https://bb-production-bd88.up.railway.app"   # الرابط الجديد
 
 PORT = int(os.environ.get("PORT", 8080))
 
