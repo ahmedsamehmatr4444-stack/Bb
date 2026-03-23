@@ -1,4 +1,3 @@
-railwaylebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from flask import Flask, request, jsonify, render_template_string
 import sqlite3
