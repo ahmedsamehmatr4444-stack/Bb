@@ -305,7 +305,6 @@ def save_fingerprint():
     user_name = user_data['name']
     user_username = user_data['username'] if user_data['username'] else "لا يوجد"
 
-    # تحديد الشبهة
     is_suspicious = False
     if banned_match:
         security_note = f"\n❌ **تنبيه خطير:** تطابق مع مطرود (ID: {banned_match['user_id']}, @{banned_match['username']})"
@@ -361,6 +360,7 @@ def save_fingerprint():
 """
 
     if is_suspicious:
+        # إرسال للمشرفين مع أزرار القبول/الرفض
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("✅ قبول", callback_data=f"accept_{user_id}"),
                    InlineKeyboardButton("❌ طرد", callback_data=f"reject_{user_id}"))
@@ -376,21 +376,20 @@ def save_fingerprint():
             c.execute("UPDATE users SET status='accepted' WHERE user_id=?", (user_id,))
             conn.commit()
 
-        # إرسال معلومات المستخدم الجديد للمشرفين (تقرير مفصل)
+        # 1. إرسال معلومات المستخدم الجديد للمشرفين (تقرير)
         for admin in ADMINS:
             try:
                 bot.send_message(admin, f"✅ **تم قبول مستخدم جديد تلقائياً:**\n{report}", parse_mode="Markdown")
             except Exception as e:
                 logging.error(f"Failed to send new user info to admin {admin}: {e}")
 
-        # إرسال القائمة الكاملة للمشرفين
+        # 2. إرسال القائمة الكاملة للمشرفين
         for admin in ADMINS:
             send_full_user_list(admin)
 
-        # إرسال رسالة للمستخدم
+        # 3. إرسال تأكيد للمستخدم
         try:
             bot.send_message(user_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
-            bot.send_message(user_id, f"📋 **معلومات حسابك المسجلة:**\n{report}", parse_mode="Markdown")
         except Exception as e:
             logging.error(f"Failed to send confirmation to user {user_id}: {e}")
 
@@ -408,7 +407,7 @@ def webhook():
 
 # ================= وظيفة إرسال القائمة الكاملة =================
 def send_full_user_list(admin_id):
-    """إرسال قائمة كاملة بجميع المستخدمين المقبولين"""
+    """إرسال قائمة كاملة بجميع المستخدمين المقبولين (القايمة)"""
     try:
         with get_db_connection() as conn:
             c = conn.cursor()
@@ -468,11 +467,10 @@ def send_welcome(message):
             bot.reply_to(message, "❌ **لقد تم طردك من الاتحاد ولا يمكنك التسجيل مرة أخرى.**", parse_mode="Markdown")
             return
         elif row['status'] == 'accepted':
-            # إرسال رسالة للمستخدم المسجل مع معلومات بسيطة
+            # عرض معلومات المستخدم (زر عرض فقط)
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton("📋 عرض معلوماتي", callback_data=f"show_my_info_{user_id}"))
-            markup.add(InlineKeyboardButton("📞 تواصل مع الإدارة", url="https://t.me/YourSupportChannel"))
-            bot.reply_to(message, "✅ **أنت مسجل بالفعل في الاتحاد العربي.**\nيمكنك استخدام الأزرار أدناه لعرض معلوماتك أو التواصل مع الإدارة.", 
+            bot.reply_to(message, "✅ **أنت مسجل بالفعل في الاتحاد العربي.**\nيمكنك النقر على الزر أدناه لعرض معلوماتك المسجلة.", 
                          parse_mode="Markdown", reply_markup=markup)
             return
         # pending: يتابع التسجيل
@@ -594,7 +592,7 @@ def handle_callback(call):
                 for admin in ADMINS:
                     send_full_user_list(admin)
                 bot.send_message(target_id, "🎉 مبروك! تم قبول توثيقك في الاتحاد.")
-                # إرسال معلومات المستخدم لنفسه
+                # إرسال معلومات المستخدم لنفسه (اختياري، لكن مفيد)
                 bot.send_message(target_id, f"📋 **معلومات حسابك المسجلة:**\n{user_info}", parse_mode="Markdown")
                 try:
                     bot.edit_message_text(f"{call.message.text}\n\n**القرار النهائي:** تم القبول ✅",
